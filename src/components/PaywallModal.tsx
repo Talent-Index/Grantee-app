@@ -2,8 +2,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Loader2, CheckCircle2, AlertCircle, CreditCard, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import type { PaymentRequirement } from '@/lib/fetchWith402';
-import { formatPrice, getNetworkName, truncateAddress } from '@/lib/x402';
+import type { X402PaymentRequirement } from '@/lib/types';
+import { formatAmount, getNetworkName, truncateAddress } from '@/lib/x402';
 import { devLog } from '@/lib/config';
 
 type PaywallStep = 'info' | 'signing' | 'settling' | 'success' | 'error';
@@ -12,7 +12,7 @@ interface PaywallModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: () => void;
-  requirement: PaymentRequirement | null;
+  requirement: X402PaymentRequirement | null;
   step: PaywallStep;
   error?: string;
 }
@@ -54,6 +54,9 @@ export function PaywallModal({
   error 
 }: PaywallModalProps) {
   const currentStep = stepInfo[step];
+  
+  // Safely get amount from requirement
+  const displayAmount = requirement ? (requirement.amount ?? requirement.maxAmountRequired) : undefined;
 
   return (
     <AnimatePresence>
@@ -109,7 +112,7 @@ export function PaywallModal({
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Amount</span>
                       <span className="font-mono font-semibold text-primary">
-                        {formatPrice(requirement.price)}
+                        {formatAmount(displayAmount)} USDC
                       </span>
                     </div>
                     <div className="flex justify-between text-sm">
@@ -124,6 +127,14 @@ export function PaywallModal({
                         {truncateAddress(requirement.payTo)}
                       </span>
                     </div>
+                    {requirement.maxTimeoutSeconds && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Timeout</span>
+                        <span className="font-medium">
+                          {requirement.maxTimeoutSeconds}s
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -174,22 +185,34 @@ export function PaywallModal({
                           onConfirm();
                         }}
                       >
-                        Pay {formatPrice(requirement?.price || '0')}
+                        Pay {formatAmount(displayAmount)} USDC
                       </Button>
                     </>
                   )}
                   
                   {step === 'error' && (
-                    <Button
-                      variant="outline"
-                      className="flex-1"
-                      onClick={() => {
-                        devLog('paywall-dismiss-error');
-                        onClose();
-                      }}
-                    >
-                      Close
-                    </Button>
+                    <>
+                      <Button
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => {
+                          devLog('paywall-dismiss-error');
+                          onClose();
+                        }}
+                      >
+                        Close
+                      </Button>
+                      <Button
+                        variant="default"
+                        className="flex-1"
+                        onClick={() => {
+                          devLog('paywall-retry');
+                          onConfirm();
+                        }}
+                      >
+                        Retry
+                      </Button>
+                    </>
                   )}
 
                   {step === 'success' && (

@@ -1,8 +1,10 @@
 // Environment configuration with runtime validation
 
+const DEBUG_KEY = 'grantee_debug';
+
 export const config = {
-  // API Configuration
-  apiBaseUrl: import.meta.env.VITE_API_BASE_URL || '',
+  // API Configuration - default to hosted version
+  apiBaseUrl: import.meta.env.VITE_API_BASE_URL || 'https://grantee.onrender.com',
   
   // Wallet Configuration
   walletConnectProjectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '',
@@ -18,13 +20,26 @@ export const config = {
   enableDevLogs: import.meta.env.DEV,
 } as const;
 
+// Debug mode management
+export function getDebugMode(): boolean {
+  try {
+    return localStorage.getItem(DEBUG_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setDebugMode(enabled: boolean): void {
+  try {
+    localStorage.setItem(DEBUG_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // Ignore
+  }
+}
+
 // Runtime validation
 export function validateConfig() {
   const errors: string[] = [];
-  
-  if (!config.apiBaseUrl) {
-    errors.push('VITE_API_BASE_URL is not configured. Set it in your environment.');
-  }
   
   if (!config.walletConnectProjectId) {
     errors.push('VITE_WALLETCONNECT_PROJECT_ID is not configured. Get one from cloud.walletconnect.com');
@@ -38,7 +53,7 @@ export function validateConfig() {
 
 // Dev logging helper
 export function devLog(action: string, ...args: unknown[]) {
-  if (config.enableDevLogs) {
-    console.log(`[Grantee] clicked:${action}`, ...args);
+  if (config.enableDevLogs || getDebugMode()) {
+    console.log(`[Grantee] ${action}`, ...args);
   }
 }

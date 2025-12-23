@@ -1,7 +1,7 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { useAccount, useWalletClient } from 'wagmi';
+import { useAccount, useWalletClient, useChainId, useSwitchChain } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { 
   Search, 
@@ -16,7 +16,8 @@ import {
   ChevronRight,
   Wallet,
   CheckCircle2,
-  Bug
+  Bug,
+  AlertTriangle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,29 +26,24 @@ import { Badge } from '@/components/ui/badge';
 import { Layout } from '@/components/Layout';
 import { PaywallModal } from '@/components/PaywallModal';
 import { AnalysisResults } from '@/components/AnalysisResults';
-import { 
-  type PaymentRequirement,
-  type PaymentPayload,
-  type AnalysisResult,
-} from '@/lib/fetchWith402';
 import { createPaymentAuthorization } from '@/lib/x402';
-import { unlockGrants, addToHistory } from '@/lib/storage';
+import { addToHistory, unlockGrants } from '@/lib/storage';
 import { getSettings, CHAIN_HINTS, DEPTH_OPTIONS } from '@/lib/settings';
-import { devLog } from '@/lib/config';
+import { devLog, getDebugMode } from '@/lib/config';
 import { toast } from 'sonner';
+import type { X402PaymentRequirement, X402PaymentPayload, AnalysisResponse } from '@/lib/types';
 
 type AnalysisStep = 'input' | 'payment' | 'signing' | 'settling' | 'results' | 'error';
 type PaywallStep = 'info' | 'signing' | 'settling' | 'success' | 'error';
-
-interface PaymentRequirementExtended extends PaymentRequirement {
-  timeout?: number;
-}
 
 export default function AnalyzePage() {
   const [searchParams] = useSearchParams();
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
+  const chainId = useChainId();
+  const { switchChain } = useSwitchChain();
   const settings = getSettings();
+  const debug = getDebugMode();
   
   // Form state
   const [repoUrl, setRepoUrl] = useState(searchParams.get('repo') || '');
@@ -58,13 +54,16 @@ export default function AnalyzePage() {
   const [step, setStep] = useState<AnalysisStep>('input');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [rawJson, setRawJson] = useState<string>('');
   
   // Payment state
   const [showPaywall, setShowPaywall] = useState(false);
   const [paywallStep, setPaywallStep] = useState<PaywallStep>('info');
-  const [paymentRequirement, setPaymentRequirement] = useState<PaymentRequirementExtended | null>(null);
+  const [paymentRequirement, setPaymentRequirement] = useState<X402PaymentRequirement | null>(null);
+
+  // Check if on correct chain
+  const isCorrectChain = chainId === 43113;
 
   // Validate GitHub URL
   const isValidGitHubUrl = (url: string): boolean => {
@@ -92,11 +91,28 @@ export default function AnalyzePage() {
       return;
     }
 
+    // Check chain
+    if (!isCorrectChain) {
+      toast.error('Please switch to Avalanche Fuji network');
+      try {
+        await switchChain({ chainId: 43113 });
+      } catch {
+        setError('Please switch to Avalanche Fuji network (Chain ID: 43113)');
+        return;
+      }
+    }
+
     setIsLoading(true);
     setStep('payment');
 
     try {
-      const response = await fetch(`${settings.apiBaseUrl}/v1/github/analyze-paid`, {
+      const apiUrl = `${settings.apiBaseUrl}/v1/github/analyze-paid`;
+      
+      if (debug) {
+        console.log('[Grantee] Sending initial request to:', apiUrl);
+      }
+
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -109,14 +125,31 @@ export default function AnalyzePage() {
         }),
       });
 
+      if (debug) {
+        console.log('[Grantee] Response status:', response.status);
+      }
+
       if (response.status === 402) {
         // Parse payment requirement
         const data = await response.json();
-        const requirement = data.accepts?.[0] || data.paymentRequirement || data;
-        setPaymentRequirement({
-          ...requirement,
-          timeout: requirement.timeout || 300,
-        });
+        
+        if (debug) {
+          console.log('[Grantee] 402 Response:', JSON.stringify(data, null, 2));
+        }
+
+        const requirement = data.accepts?.[0];
+        
+        if (!requirement) {
+          throw new Error('No payment requirement in 402 response');
+        }
+
+        // Validate amount exists
+        const amountRaw = requirement.amount ?? requirement.maxAmountRequired;
+        if (!amountRaw) {
+          throw new Error('Payment requirement missing amount');
+        }
+
+        setPaymentRequirement(requirement);
         setShowPaywall(true);
         setPaywallStep('info');
         setIsLoading(false);
@@ -125,7 +158,7 @@ export default function AnalyzePage() {
         const data = await response.json();
         handleAnalysisSuccess(data);
       } else {
-        const errData = await response.json().catch(() => ({}));
+        const errData = await response.json().catch(() => ({ error: response.statusText }));
         throw new Error(errData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
     } catch (err) {
@@ -138,6 +171,14 @@ export default function AnalyzePage() {
   const handlePaymentConfirm = async () => {
     if (!walletClient || !address || !paymentRequirement) {
       setPaywallStep('error');
+      setError('Wallet not connected or payment requirement missing');
+      return;
+    }
+
+    // Double check chain
+    if (!isCorrectChain) {
+      setPaywallStep('error');
+      setError('Wrong network. Please switch to Avalanche Fuji.');
       return;
     }
 
@@ -150,6 +191,10 @@ export default function AnalyzePage() {
         paymentRequirement,
         address
       );
+
+      if (debug) {
+        console.log('[Grantee] Payment payload:', JSON.stringify(paymentPayload, null, 2));
+      }
 
       setPaywallStep('settling');
       setStep('settling');
@@ -170,13 +215,29 @@ export default function AnalyzePage() {
         }),
       });
 
+      if (debug) {
+        console.log('[Grantee] Paid request response status:', response.status);
+      }
+
       if (response.ok) {
         const data = await response.json();
+        
+        if (debug) {
+          console.log('[Grantee] Success response:', JSON.stringify(data, null, 2));
+        }
+
         setPaywallStep('success');
         setTimeout(() => {
           setShowPaywall(false);
           handleAnalysisSuccess(data);
         }, 1500);
+      } else if (response.status === 402) {
+        // Backend returned 402 again - payment not accepted
+        const errData = await response.json().catch(() => ({}));
+        if (debug) {
+          console.log('[Grantee] 402 after payment:', errData);
+        }
+        throw new Error('Payment not accepted by server. Ensure you have USDC on Avalanche Fuji.');
       } else {
         const errData = await response.json().catch(() => ({}));
         throw new Error(errData.error || `Settlement failed: HTTP ${response.status}`);
@@ -184,11 +245,20 @@ export default function AnalyzePage() {
     } catch (err) {
       console.error('Payment failed:', err);
       setPaywallStep('error');
-      handleError(err);
+      
+      // Handle specific errors
+      const message = err instanceof Error ? err.message : 'Payment failed';
+      if (message.includes('User rejected') || message.includes('rejected')) {
+        setError('Transaction rejected by user');
+      } else if (message.includes('insufficient')) {
+        setError('Insufficient USDC balance on Avalanche Fuji');
+      } else {
+        setError(message);
+      }
     }
   };
 
-  const handleAnalysisSuccess = (data: AnalysisResult) => {
+  const handleAnalysisSuccess = (data: AnalysisResponse) => {
     devLog('analyze-success', data);
     setResult(data);
     setRawJson(JSON.stringify(data, null, 2));
@@ -196,7 +266,7 @@ export default function AnalyzePage() {
     setIsLoading(false);
 
     // Unlock grants and save to history
-    if (data.settlement?.success && address) {
+    if ((data.success || data.settlement?.success) && address) {
       unlockGrants(address);
       addToHistory(repoUrl.trim(), data.result, data.settlement);
       toast.success('Analysis complete! Grants explorer is now unlocked.');
@@ -209,8 +279,8 @@ export default function AnalyzePage() {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
     
     // Provide helpful messages
-    if (message.includes('fetch') || message.includes('network')) {
-      setError('Network error: Unable to reach the API. The server may be waking up...');
+    if (message.includes('fetch') || message.includes('network') || message.includes('Failed to fetch')) {
+      setError('Network error: Unable to reach the API. The server may be waking up (Render cold start). Please retry in ~30 seconds.');
     } else if (message.includes('CORS')) {
       setError('CORS error: The API is not configured to accept requests from this domain.');
     } else {
@@ -223,8 +293,9 @@ export default function AnalyzePage() {
 
   const handlePaywallClose = () => {
     setShowPaywall(false);
-    if (paywallStep === 'info') {
+    if (paywallStep === 'info' || paywallStep === 'error') {
       setStep('input');
+      setError(null);
     }
   };
 
@@ -236,6 +307,13 @@ export default function AnalyzePage() {
     setError(null);
     setStep('input');
     setPaymentRequirement(null);
+  };
+
+  const handleRetry = () => {
+    devLog('analyze-retry');
+    setError(null);
+    setStep('input');
+    handleContinue();
   };
 
   const handleCopyJson = () => {
@@ -292,6 +370,34 @@ User Agent: ${navigator.userAgent}
           </p>
         </motion.div>
 
+        {/* Network Warning */}
+        {isConnected && !isCorrectChain && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="max-w-xl mx-auto mb-6"
+          >
+            <Card className="border-warning/50 bg-warning/5">
+              <CardContent className="py-4">
+                <div className="flex items-center gap-3">
+                  <AlertTriangle className="h-5 w-5 text-warning" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-warning">Wrong Network</p>
+                    <p className="text-xs text-muted-foreground">Please switch to Avalanche Fuji (43113)</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => switchChain({ chainId: 43113 })}
+                  >
+                    Switch
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+
         {/* Step Indicator */}
         {step !== 'input' && step !== 'results' && (
           <motion.div
@@ -332,7 +438,7 @@ User Agent: ${navigator.userAgent}
                   <span>Repository Details</span>
                   <Badge variant="primary" className="flex items-center gap-1">
                     <DollarSign className="h-3 w-3" />
-                    $0.10 USDC
+                    0.10 USDC
                   </Badge>
                 </CardTitle>
                 <CardDescription>
@@ -410,15 +516,26 @@ User Agent: ${navigator.userAgent}
                           <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
                           <div className="flex-1">
                             <p className="text-sm text-destructive">{error}</p>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={handleReportIssue}
-                              className="mt-2 text-xs"
-                            >
-                              <Bug className="h-3 w-3 mr-1" />
-                              Report Issue
-                            </Button>
+                            <div className="flex gap-2 mt-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={handleRetry}
+                                className="text-xs"
+                              >
+                                <RefreshCw className="h-3 w-3 mr-1" />
+                                Retry
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={handleReportIssue}
+                                className="text-xs"
+                              >
+                                <Bug className="h-3 w-3 mr-1" />
+                                Report Issue
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -429,7 +546,7 @@ User Agent: ${navigator.userAgent}
                       variant="hero"
                       className="w-full"
                       onClick={handleContinue}
-                      disabled={isLoading}
+                      disabled={isLoading || !repoUrl.trim() || !isValidGitHubUrl(repoUrl)}
                     >
                       {isLoading ? (
                         <>
@@ -438,8 +555,8 @@ User Agent: ${navigator.userAgent}
                         </>
                       ) : (
                         <>
-                          Continue
-                          <ChevronRight className="h-4 w-4 ml-1" />
+                          <DollarSign className="h-4 w-4" />
+                          Pay 0.10 USDC & Analyze
                         </>
                       )}
                     </Button>
@@ -536,7 +653,7 @@ User Agent: ${navigator.userAgent}
         onConfirm={handlePaymentConfirm}
         requirement={paymentRequirement}
         step={paywallStep}
-        error={paywallStep === 'error' ? 'Payment failed. Please try again.' : undefined}
+        error={paywallStep === 'error' ? (error || 'Payment failed. Please try again.') : undefined}
       />
     </Layout>
   );

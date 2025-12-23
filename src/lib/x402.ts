@@ -1,58 +1,93 @@
 import { type WalletClient, parseUnits, keccak256, encodePacked, toHex } from 'viem';
-import type { PaymentRequirement, PaymentPayload } from './fetchWith402';
-import { config, devLog } from './config';
-
-// EIP-3009 Domain separator for USDC on Avalanche Fuji
-const DOMAIN_SEPARATOR_TYPEHASH = keccak256(
-  encodePacked(
-    ['string'],
-    ['EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)']
-  )
-);
-
-const TRANSFER_WITH_AUTHORIZATION_TYPEHASH = keccak256(
-  encodePacked(
-    ['string'],
-    ['TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)']
-  )
-);
-
-// USDC token details
-const USDC_NAME = 'USD Coin';
-const USDC_VERSION = '2';
+import type { X402PaymentRequirement, X402PaymentPayload } from './types';
+import { devLog, getDebugMode } from './config';
 
 /**
- * Create an EIP-3009 authorization signature for USDC transfer
+ * Parse amount from x402 requirement safely
+ * Handles both base units (string integer) and decimal format
+ */
+export function parseAmountSafe(amountRaw: string | undefined, decimals: number = 6): bigint {
+  if (!amountRaw) {
+    throw new Error('Payment requirement missing amount');
+  }
+  
+  // If it looks like base units (no decimal), use BigInt directly
+  if (/^\d+$/.test(amountRaw)) {
+    return BigInt(amountRaw);
+  }
+  
+  // Otherwise parse as decimal
+  try {
+    return parseUnits(amountRaw, decimals);
+  } catch (err) {
+    throw new Error(`Invalid amount format: ${amountRaw}`);
+  }
+}
+
+/**
+ * Extract chain ID from network string
+ * Supports: avalanche-fuji, eip155:43113, etc.
+ */
+export function parseChainId(network: string): number {
+  if (network === 'avalanche-fuji' || network === 'fuji') {
+    return 43113;
+  }
+  
+  // Handle CAIP-2 format: eip155:43113
+  const caip2Match = network.match(/^eip155:(\d+)$/);
+  if (caip2Match) {
+    return parseInt(caip2Match[1], 10);
+  }
+  
+  // Default to Avalanche Fuji
+  return 43113;
+}
+
+/**
+ * Create an EIP-3009 TransferWithAuthorization signature for x402 payment
  */
 export async function createPaymentAuthorization(
   walletClient: WalletClient,
-  requirement: PaymentRequirement,
+  requirement: X402PaymentRequirement,
   fromAddress: `0x${string}`
-): Promise<PaymentPayload> {
+): Promise<X402PaymentPayload> {
+  const debug = getDebugMode();
+  
+  if (debug) {
+    console.log('[x402] Creating payment authorization', { requirement, fromAddress });
+  }
   devLog('x402-create-auth', { requirement, fromAddress });
   
-  const toAddress = requirement.payTo as `0x${string}`;
-  const value = parseUnits(requirement.price, 6); // USDC has 6 decimals
+  // Extract and validate amount
+  const amountRaw = requirement.amount ?? requirement.maxAmountRequired;
+  if (!amountRaw) {
+    throw new Error('Payment requirement missing amount. Check backend response.');
+  }
   
-  // Generate nonce
-  const nonce = requirement.nonce 
-    ? (requirement.nonce as `0x${string}`)
-    : keccak256(encodePacked(['address', 'uint256'], [fromAddress, BigInt(Date.now())]));
+  const value = parseAmountSafe(amountRaw, 6);
+  const toAddress = requirement.payTo as `0x${string}`;
+  const assetAddress = requirement.asset as `0x${string}`;
+  const chainId = parseChainId(requirement.network);
+  
+  // Generate random 32-byte nonce
+  const randomBytes = new Uint8Array(32);
+  crypto.getRandomValues(randomBytes);
+  const nonce = ('0x' + Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('')) as `0x${string}`;
   
   // Set validity window
   const now = Math.floor(Date.now() / 1000);
-  const validAfter = now - 60; // Valid from 1 minute ago
-  const validBefore = now + 3600; // Valid for 1 hour
+  const validAfter = 0; // Valid immediately
+  const validBefore = now + (requirement.maxTimeoutSeconds ?? 600);
   
-  // Build the domain
+  // Build domain from requirement.extra if available
   const domain = {
-    name: USDC_NAME,
-    version: USDC_VERSION,
-    chainId: BigInt(config.chainId),
-    verifyingContract: config.usdcAddress,
+    name: requirement.extra?.name ?? 'USDC',
+    version: requirement.extra?.version ?? '2',
+    chainId: BigInt(chainId),
+    verifyingContract: assetAddress,
   };
   
-  // Build the message (TransferWithAuthorization)
+  // Build message (TransferWithAuthorization)
   const message = {
     from: fromAddress,
     to: toAddress,
@@ -62,7 +97,7 @@ export async function createPaymentAuthorization(
     nonce: nonce,
   };
   
-  // Type definitions for EIP-712
+  // EIP-712 types
   const types = {
     TransferWithAuthorization: [
       { name: 'from', type: 'address' },
@@ -74,6 +109,9 @@ export async function createPaymentAuthorization(
     ],
   } as const;
   
+  if (debug) {
+    console.log('[x402] Signing typed data', { domain, message, types });
+  }
   devLog('x402-signing', { domain, message });
   
   // Sign typed data
@@ -85,13 +123,16 @@ export async function createPaymentAuthorization(
     message,
   });
   
+  if (debug) {
+    console.log('[x402] Signature obtained', { signature: signature.slice(0, 20) + '...' });
+  }
   devLog('x402-signed', { signature: signature.slice(0, 20) + '...' });
   
-  // Build payment payload
-  const paymentPayload: PaymentPayload = {
+  // Build x402 payment payload matching backend expectations
+  const paymentPayload: X402PaymentPayload = {
     x402Version: 2,
-    scheme: 'eip3009',
-    network: 'avalanche-fuji',
+    scheme: requirement.scheme ?? 'exact',
+    network: requirement.network,
     payload: {
       signature,
       authorization: {
@@ -103,17 +144,55 @@ export async function createPaymentAuthorization(
         nonce: nonce,
       },
     },
+    // Include accepted requirement info for backend
+    accepted: {
+      scheme: requirement.scheme ?? 'exact',
+      network: requirement.network,
+      asset: requirement.asset,
+      payTo: requirement.payTo,
+      amount: value.toString(),
+      maxTimeoutSeconds: requirement.maxTimeoutSeconds ?? 600,
+      extra: requirement.extra ?? {},
+    },
   };
+  
+  if (debug) {
+    console.log('[x402] Payment payload built', paymentPayload);
+  }
   
   return paymentPayload;
 }
 
 /**
- * Format price for display
+ * Format amount for display
  */
-export function formatPrice(price: string, currency: string = 'USDC'): string {
-  const amount = parseFloat(price);
-  return `$${amount.toFixed(2)} ${currency}`;
+export function formatAmount(amountRaw: string | undefined, decimals: number = 6): string {
+  if (!amountRaw) return '$0.00';
+  
+  try {
+    // If base units, convert to decimal
+    if (/^\d+$/.test(amountRaw)) {
+      const value = BigInt(amountRaw);
+      const divisor = BigInt(10 ** decimals);
+      const whole = value / divisor;
+      const fraction = value % divisor;
+      const fractionStr = fraction.toString().padStart(decimals, '0').slice(0, 2);
+      return `$${whole}.${fractionStr}`;
+    }
+    
+    // Already decimal
+    const amount = parseFloat(amountRaw);
+    return `$${amount.toFixed(2)}`;
+  } catch {
+    return '$0.00';
+  }
+}
+
+/**
+ * Format price for display (alias for backward compatibility)
+ */
+export function formatPrice(price: string | undefined, currency: string = 'USDC'): string {
+  return `${formatAmount(price)} ${currency}`;
 }
 
 /**
@@ -126,6 +205,7 @@ export function getNetworkName(network: string): string {
     'avalanche': 'Avalanche',
     'ethereum': 'Ethereum',
     'polygon': 'Polygon',
+    'eip155:43113': 'Avalanche Fuji',
   };
   return networks[network.toLowerCase()] || network;
 }
