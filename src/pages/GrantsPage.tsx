@@ -16,7 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Layout } from '@/components/Layout';
 import { GrantCard } from '@/components/GrantCard';
 import { grantsData, getRecommendedGrants, type Grant } from '@/data/grants';
-import { isGrantsUnlocked, getAnalysisHistory } from '@/lib/storage';
+import { isGrantsUnlocked, getAnalysisHistory, type HistoryItem } from '@/lib/storage';
 import { devLog } from '@/lib/config';
 
 type FilterCategory = 'all' | Grant['category'];

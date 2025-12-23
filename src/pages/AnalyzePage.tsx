@@ -268,9 +268,11 @@ export default function AnalyzePage() {
     // Unlock grants and save to history
     if ((data.success || data.settlement?.success) && address) {
       unlockGrants(address);
-      addToHistory(repoUrl.trim(), data.result, data.settlement);
+      addToHistory(repoUrl.trim(), data.result, data.settlement, depth, chainHint);
       toast.success('Analysis complete! Grants explorer is now unlocked.');
-    } else {
+    } else if (data.result) {
+      // Still save to history even without payment success
+      addToHistory(repoUrl.trim(), data.result, data.settlement, depth, chainHint);
       toast.success('Analysis complete!');
     }
   };

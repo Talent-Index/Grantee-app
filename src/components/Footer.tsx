@@ -1,13 +1,14 @@
+import { forwardRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Zap, Github, ExternalLink } from 'lucide-react';
 import { getSettings } from '@/lib/settings';
 import { devLog } from '@/lib/config';
 
-export function Footer() {
+export const Footer = forwardRef<HTMLElement>((_, ref) => {
   const settings = getSettings();
 
   return (
-    <footer className="border-t border-border/50 bg-background/50 backdrop-blur-sm">
+    <footer ref={ref} className="border-t border-border/50 bg-background/50 backdrop-blur-sm">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           {/* Brand */}
@@ -56,4 +57,6 @@ export function Footer() {
       </div>
     </footer>
   );
-}
+});
+
+Footer.displayName = 'Footer';
