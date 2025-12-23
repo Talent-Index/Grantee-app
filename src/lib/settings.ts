@@ -6,19 +6,19 @@ export interface AppSettings {
   apiBaseUrl: string;
   defaultChainHint: string;
   defaultDepth: 'light' | 'full';
+  showDebugLogs: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   apiBaseUrl: 'https://grantee.onrender.com',
   defaultChainHint: 'avalanche-fuji',
   defaultDepth: 'light',
+  showDebugLogs: false,
 };
 
 export const CHAIN_HINTS = [
-  { value: 'avalanche-fuji', label: 'Avalanche Fuji (Testnet)' },
-  { value: 'avalanche', label: 'Avalanche (Mainnet)' },
-  { value: 'evm', label: 'EVM (Generic)' },
-  { value: 'eip155:43113', label: 'EIP-155: 43113' },
+  { value: 'avalanche-fuji', label: 'Avalanche Fuji (Testnet)', chainId: 43113 },
+  { value: 'eip155:43113', label: 'EIP-155: 43113', chainId: 43113 },
 ] as const;
 
 export const DEPTH_OPTIONS = [
