@@ -1,13 +1,17 @@
 // Environment configuration with runtime validation
+import { getSettings as getAppSettings } from './settings';
 
 const DEBUG_KEY = 'grantee_debug';
 
+// API base URL - configurable via settings or env var
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'https://grantee.onrender.com';
+
 export const config = {
   // API Configuration - default to hosted version
-  apiBaseUrl: import.meta.env.VITE_API_BASE_URL || 'https://grantee.onrender.com',
+  apiBaseUrl: API_BASE_URL,
   
-  // Wallet Configuration
-  walletConnectProjectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '',
+  // WalletConnect Project ID (hardcoded since it's not sensitive)
+  walletConnectProjectId: '44df16e20cb88f941df56ee77d0f7918',
   
   // Chain Configuration
   chainId: 43113, // Avalanche Fuji Testnet
@@ -19,6 +23,9 @@ export const config = {
   // Feature flags
   enableDevLogs: import.meta.env.DEV,
 } as const;
+
+// Re-export getSettings for convenience
+export { getAppSettings as getSettings };
 
 // Debug mode management
 export function getDebugMode(): boolean {
