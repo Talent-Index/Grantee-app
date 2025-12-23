@@ -7,7 +7,8 @@ import {
   Lock, 
   ArrowRight,
   Sparkles,
-  X
+  X,
+  Layers
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,8 +16,10 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Layout } from '@/components/Layout';
 import { GrantCard } from '@/components/GrantCard';
+import { NichesGrid } from '@/components/niches/NichesGrid';
 import { grantsData, getRecommendedGrants, type Grant } from '@/data/grants';
 import { isGrantsUnlocked, getAnalysisHistory, type HistoryItem } from '@/lib/storage';
+import { matchGrantsForNiche, getNicheById } from '@/lib/matching';
 import { devLog } from '@/lib/config';
 
 type FilterCategory = 'all' | Grant['category'];
@@ -44,10 +47,20 @@ export default function GrantsPage() {
   const [ecosystemFilter, setEcosystemFilter] = useState<FilterEcosystem>('all');
   const [grantTypeFilter, setGrantTypeFilter] = useState<FilterGrantType>('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [selectedNicheId, setSelectedNicheId] = useState<string | null>(null);
 
-  // Filter grants
+  // Get selected niche info
+  const selectedNiche = selectedNicheId ? getNicheById(selectedNicheId) : null;
+
+  // Get niche-filtered grants
+  const nicheFilteredGrants = useMemo(() => {
+    if (!selectedNicheId) return grantsData;
+    return matchGrantsForNiche(selectedNicheId, grantsData);
+  }, [selectedNicheId]);
+
+  // Filter grants (apply on top of niche-filtered grants)
   const filteredGrants = useMemo(() => {
-    return grantsData.filter((grant) => {
+    return nicheFilteredGrants.filter((grant) => {
       // Search
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
@@ -70,16 +83,17 @@ export default function GrantsPage() {
       
       return true;
     });
-  }, [searchQuery, categoryFilter, ecosystemFilter, grantTypeFilter]);
+  }, [nicheFilteredGrants, searchQuery, categoryFilter, ecosystemFilter, grantTypeFilter]);
 
   const activeFiltersCount = [categoryFilter, ecosystemFilter, grantTypeFilter]
-    .filter(f => f !== 'all').length;
+    .filter(f => f !== 'all').length + (selectedNicheId ? 1 : 0);
 
   const clearFilters = () => {
     setCategoryFilter('all');
     setEcosystemFilter('all');
     setGrantTypeFilter('all');
     setSearchQuery('');
+    setSelectedNicheId(null);
     devLog('grants-clear-filters');
   };
 
@@ -135,12 +149,50 @@ export default function GrantsPage() {
           </p>
         </motion.div>
 
+        {/* Builder Niches Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="mb-8"
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <Layers className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-semibold">Pick your niche</h2>
+          </div>
+          <p className="text-sm text-muted-foreground mb-4">
+            Select a builder niche to see grants tailored to what you're building.
+          </p>
+          <NichesGrid 
+            selectedNicheId={selectedNicheId} 
+            onSelectNiche={(id) => {
+              setSelectedNicheId(id);
+              devLog('niche-select', id);
+            }} 
+          />
+          {selectedNiche && (
+            <div className="mt-4 flex items-center gap-3">
+              <Badge variant="primary" className="text-sm">
+                Showing grants for: {selectedNiche.name}
+              </Badge>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => setSelectedNicheId(null)}
+              >
+                <X className="h-4 w-4 mr-1" />
+                Clear niche
+              </Button>
+            </div>
+          )}
+        </motion.div>
+
         {/* Recommended Grants */}
-        {recommendedGrants.length > 0 && (
+        {recommendedGrants.length > 0 && !selectedNicheId && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
+            transition={{ delay: 0.15 }}
             className="mb-12"
           >
             <div className="flex items-center gap-2 mb-6">
