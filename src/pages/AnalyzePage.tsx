@@ -26,10 +26,12 @@ import { Badge } from '@/components/ui/badge';
 import { Layout } from '@/components/Layout';
 import { PaywallModal } from '@/components/PaywallModal';
 import { AnalysisResults } from '@/components/AnalysisResults';
+import { WalletStatus } from '@/components/WalletStatus';
 import { createPaymentAuthorization } from '@/lib/x402';
 import { addToHistory, unlockGrants } from '@/lib/storage';
 import { getSettings, CHAIN_HINTS, DEPTH_OPTIONS } from '@/lib/settings';
 import { devLog, getDebugMode } from '@/lib/config';
+import { isSupportedChain } from '@/lib/wagmiConfig';
 import { toast } from 'sonner';
 import type { X402PaymentRequirement, X402PaymentPayload, AnalysisResponse } from '@/lib/types';
 
@@ -62,8 +64,8 @@ export default function AnalyzePage() {
   const [paywallStep, setPaywallStep] = useState<PaywallStep>('info');
   const [paymentRequirement, setPaymentRequirement] = useState<X402PaymentRequirement | null>(null);
 
-  // Check if on correct chain
-  const isCorrectChain = chainId === 43113;
+  // Check if on correct chain (support both Fuji and Mainnet)
+  const isCorrectChain = isSupportedChain(chainId);
 
   // Validate GitHub URL
   const isValidGitHubUrl = (url: string): boolean => {
@@ -461,6 +463,9 @@ User Agent: ${navigator.userAgent}
                   </div>
                 ) : (
                   <>
+                    {/* Wallet Status Panel */}
+                    <WalletStatus />
+                    
                     {/* Repo URL */}
                     <div className="space-y-2">
                       <label className="text-sm font-medium">Repository URL</label>
