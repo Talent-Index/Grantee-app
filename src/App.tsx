@@ -9,7 +9,7 @@ import { wagmiConfig } from '@/lib/wagmiConfig';
 import HomePage from './pages/HomePage';
 import DashboardPage from './pages/DashboardPage';
 import AnalyzePage from './pages/AnalyzePage';
-import GrantsPage from './pages/GrantsPage';
+import GrantsExplorePage from './pages/GrantsExplorePage';
 import HistoryPage from './pages/HistoryPage';
 import SettingsPage from './pages/SettingsPage';
 import NotFound from './pages/NotFound';
@@ -26,7 +26,7 @@ const App = () => (
             <Route path="/" element={<HomePage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/analyze" element={<AnalyzePage />} />
-            <Route path="/grants" element={<GrantsPage />} />
+            <Route path="/grants" element={<GrantsExplorePage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<NotFound />} />
