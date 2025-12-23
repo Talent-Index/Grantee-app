@@ -129,26 +129,52 @@ export default function AnalyzePage() {
 
       if (debug) {
         console.log('[Grantee] Response status:', response.status);
+        console.log('[Grantee] Response headers:', Object.fromEntries(response.headers.entries()));
       }
 
       if (response.status === 402) {
-        // Parse payment requirement
-        const data = await response.json();
+        // Parse payment requirement from headers first (priority order), then body
+        let requirement: X402PaymentRequirement | null = null;
+        let source = '';
+        
+        const headerNames = ['payment-required', 'x402-payment-required', 'x-402-payment-required'];
+        for (const headerName of headerNames) {
+          const headerValue = response.headers.get(headerName);
+          if (headerValue) {
+            try {
+              const parsed = JSON.parse(headerValue);
+              requirement = parsed.accepts?.[0] ?? parsed;
+              source = `header:${headerName}`;
+              break;
+            } catch {
+              if (debug) console.log(`[Grantee] Failed to parse ${headerName} header`);
+            }
+          }
+        }
+        
+        // Fallback to JSON body
+        if (!requirement) {
+          const data = await response.json();
+          if (debug) {
+            console.log('[Grantee] 402 Body:', JSON.stringify(data, null, 2));
+          }
+          requirement = data.accepts?.[0] ?? data.paymentRequirement ?? data;
+          source = data.accepts ? 'body:accepts[0]' : 'body';
+        }
         
         if (debug) {
-          console.log('[Grantee] 402 Response:', JSON.stringify(data, null, 2));
+          console.log('[Grantee] Payment requirement from:', source);
+          console.log('[Grantee] Requirement:', JSON.stringify(requirement, null, 2));
         }
 
-        const requirement = data.accepts?.[0];
-        
         if (!requirement) {
-          throw new Error('No payment requirement in 402 response');
+          throw new Error('No payment requirement in 402 response. Checked headers: ' + headerNames.join(', ') + ' and JSON body.');
         }
 
         // Validate amount exists
         const amountRaw = requirement.amount ?? requirement.maxAmountRequired;
         if (!amountRaw) {
-          throw new Error('Payment requirement missing amount');
+          throw new Error('Payment requirement missing amount field');
         }
 
         setPaymentRequirement(requirement);
@@ -160,11 +186,16 @@ export default function AnalyzePage() {
         const data = await response.json();
         handleAnalysisSuccess(data);
       } else {
-        const errData = await response.json().catch(() => ({ error: response.statusText }));
+        const errText = await response.text();
+        if (debug) {
+          console.log('[Grantee] Error response:', response.status, errText);
+        }
+        let errData: { error?: string } = {};
+        try { errData = JSON.parse(errText); } catch { /* ignore */ }
         throw new Error(errData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
     } catch (err) {
-      console.error('Analysis check failed:', err);
+      console.error('[Grantee] Analysis check failed:', err);
       handleError(err);
     }
   };
@@ -201,31 +232,45 @@ export default function AnalyzePage() {
       setPaywallStep('settling');
       setStep('settling');
 
-      // Retry with payment payload
-      const response = await fetch(`${settings.apiBaseUrl}/v1/github/analyze-paid`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'x-402-payment': JSON.stringify(paymentPayload),
-        },
-        body: JSON.stringify({
-          repoUrl: repoUrl.trim(),
-          depth,
-          chainHint,
-          paymentPayload,
-        }),
+      // Retry with payment payload in header only (per x402 spec)
+      const retryUrl = `${settings.apiBaseUrl}/v1/github/analyze-paid`;
+      const retryHeaders = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'x-402-payment': JSON.stringify(paymentPayload),
+      };
+      const retryBody = JSON.stringify({
+        repoUrl: repoUrl.trim(),
+        depth,
+        chainHint,
       });
 
       if (debug) {
-        console.log('[Grantee] Paid request response status:', response.status);
+        console.log('[Grantee] Retry request URL:', retryUrl);
+        console.log('[Grantee] Retry headers:', { ...retryHeaders, 'x-402-payment': '[PAYLOAD]' });
+        console.log('[Grantee] Retry body:', retryBody);
+      }
+
+      const response = await fetch(retryUrl, {
+        method: 'POST',
+        headers: retryHeaders,
+        body: retryBody,
+      });
+
+      const responseText = await response.text();
+      
+      if (debug) {
+        console.log('[Grantee] Retry response status:', response.status);
+        console.log('[Grantee] Retry response headers:', Object.fromEntries(response.headers.entries()));
+        console.log('[Grantee] Retry response body:', responseText);
       }
 
       if (response.ok) {
-        const data = await response.json();
-        
-        if (debug) {
-          console.log('[Grantee] Success response:', JSON.stringify(data, null, 2));
+        let data;
+        try {
+          data = JSON.parse(responseText);
+        } catch {
+          throw new Error('Invalid JSON in success response');
         }
 
         setPaywallStep('success');
@@ -235,17 +280,17 @@ export default function AnalyzePage() {
         }, 1500);
       } else if (response.status === 402) {
         // Backend returned 402 again - payment not accepted
-        const errData = await response.json().catch(() => ({}));
-        if (debug) {
-          console.log('[Grantee] 402 after payment:', errData);
-        }
-        throw new Error('Payment not accepted by server. Ensure you have USDC on Avalanche Fuji.');
+        console.error('[Grantee] Payment rejected - 402 returned again');
+        console.error('[Grantee] Response:', responseText);
+        throw new Error('Payment not accepted by server. Check console for debug details.');
       } else {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Settlement failed: HTTP ${response.status}`);
+        let errData: { error?: string } = {};
+        try { errData = JSON.parse(responseText); } catch { /* ignore */ }
+        console.error('[Grantee] Settlement failed:', response.status, responseText);
+        throw new Error(errData.error || `Settlement failed: HTTP ${response.status} - ${responseText.slice(0, 200)}`);
       }
     } catch (err) {
-      console.error('Payment failed:', err);
+      console.error('[Grantee] Payment failed:', err);
       setPaywallStep('error');
       
       // Handle specific errors

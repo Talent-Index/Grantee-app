@@ -136,9 +136,9 @@ export async function fetchWith402<T = unknown>(
     if (response.status === 402) {
       onStatusChange?.('payment_required');
       
-      // Parse payment requirement from response
-      const paymentRequirement = await parsePaymentRequirement(response);
-      devLog('payment-required', paymentRequirement);
+      // Parse payment requirement from response with source tracking
+      const { requirement: paymentRequirement, source } = await parsePaymentRequirement(response);
+      devLog('payment-required', { requirement: paymentRequirement, source });
       
       if (!onPaymentRequired) {
         throw new FetchWith402Error(
@@ -158,9 +158,9 @@ export async function fetchWith402<T = unknown>(
         );
       }
       
-      devLog('payment-signed', { hasPayload: !!paymentPayload });
+      devLog('payment-signed', { hasPayload: !!paymentPayload, source });
       
-      // Retry with payment payload
+      // Retry with payment payload in x-402-payment header only
       onStatusChange?.('settling');
       
       const retryResponse = await fetch(url, {
@@ -175,11 +175,14 @@ export async function fetchWith402<T = unknown>(
       onStatusChange?.('retrying');
       
       if (!retryResponse.ok) {
-        const errorData = await retryResponse.json().catch(() => ({}));
+        const errorText = await retryResponse.text();
+        let errorData: Record<string, unknown> = {};
+        try { errorData = JSON.parse(errorText); } catch { /* ignore */ }
+        
         throw new FetchWith402Error(
-          errorData.error || `Settlement failed with status ${retryResponse.status}`,
+          errorData.error as string || `Settlement failed: HTTP ${retryResponse.status}`,
           'SETTLEMENT_FAILED',
-          errorData
+          { status: retryResponse.status, body: errorText, parsed: errorData }
         );
       }
       
@@ -227,32 +230,43 @@ export async function fetchWith402<T = unknown>(
 
 /**
  * Parse payment requirement from 402 response
+ * Priority: payment-required > x402-payment-required > x-402-payment-required > JSON body
  */
-async function parsePaymentRequirement(response: Response): Promise<PaymentRequirement> {
-  // Try to get from X-Payment header first
-  const paymentHeader = response.headers.get('X-Payment');
-  if (paymentHeader) {
-    try {
-      return JSON.parse(paymentHeader);
-    } catch {
-      // Fall through to body parsing
+async function parsePaymentRequirement(response: Response): Promise<{ requirement: PaymentRequirement; source: string }> {
+  // Header priority order per x402 spec
+  const headerNames = [
+    'payment-required',
+    'x402-payment-required', 
+    'x-402-payment-required',
+  ];
+  
+  for (const headerName of headerNames) {
+    const headerValue = response.headers.get(headerName);
+    if (headerValue) {
+      try {
+        const parsed = JSON.parse(headerValue);
+        // Handle x402 v2 format with accepts array
+        const requirement = parsed.accepts?.[0] ?? parsed;
+        return { requirement, source: `header:${headerName}` };
+      } catch {
+        // Continue to next header
+      }
     }
   }
   
-  // Try to get from response body
+  // Fallback to JSON body
   try {
     const body = await response.json();
+    if (body.accepts?.[0]) {
+      return { requirement: body.accepts[0], source: 'body:accepts[0]' };
+    }
     if (body.paymentRequirement) {
-      return body.paymentRequirement;
+      return { requirement: body.paymentRequirement, source: 'body:paymentRequirement' };
     }
-    if (body.accepts) {
-      // Handle x402 v2 format
-      return body.accepts[0] || body;
-    }
-    return body;
+    return { requirement: body, source: 'body:root' };
   } catch {
     throw new FetchWith402Error(
-      'Unable to parse payment requirement from 402 response',
+      'Unable to parse payment requirement from 402 response. Checked headers: ' + headerNames.join(', ') + ' and JSON body.',
       'API_ERROR'
     );
   }
