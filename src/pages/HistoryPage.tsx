@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
@@ -14,16 +14,21 @@ import {
   Trash2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Layout } from '@/components/Layout';
-import { getAnalysisHistory, type AnalysisHistoryItem } from '@/lib/storage';
+import { getAnalysisHistory, deleteHistoryItem, clearHistory, type HistoryItem } from '@/lib/storage';
 import { truncateAddress } from '@/lib/x402';
 import { devLog } from '@/lib/config';
+import { toast } from 'sonner';
 
 export default function HistoryPage() {
-  const [history] = useState<AnalysisHistoryItem[]>(getAnalysisHistory);
+  const [history, setHistory] = useState<HistoryItem[]>(getAnalysisHistory);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+
+  const refreshHistory = useCallback(() => {
+    setHistory(getAnalysisHistory());
+  }, []);
 
   const toggleExpand = (id: string) => {
     devLog(`history-toggle-${id}`);
@@ -36,6 +41,20 @@ export default function HistoryPage() {
       }
       return next;
     });
+  };
+
+  const handleDelete = (id: string) => {
+    devLog(`history-delete-${id}`);
+    deleteHistoryItem(id);
+    refreshHistory();
+    toast.success('Analysis removed from history');
+  };
+
+  const handleClearAll = () => {
+    devLog('history-clear-all');
+    clearHistory();
+    refreshHistory();
+    toast.success('History cleared');
   };
 
   const formatDate = (timestamp: number) => {
@@ -74,9 +93,8 @@ export default function HistoryPage() {
               variant="hero"
               size="lg"
               asChild
-              onClick={() => devLog('history-empty-cta')}
             >
-              <Link to="/analyze">
+              <Link to="/analyze" onClick={() => devLog('history-empty-cta')}>
                 <SearchIcon className="h-5 w-5 mr-2" />
                 Analyze a Repository
               </Link>
@@ -102,16 +120,24 @@ export default function HistoryPage() {
               View your past repository analyses and results.
             </p>
           </div>
-          <Button
-            variant="outline"
-            asChild
-            onClick={() => devLog('history-new-analysis')}
-          >
-            <Link to="/analyze">
-              <RefreshCw className="h-4 w-4 mr-2" />
-              New Analysis
-            </Link>
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={handleClearAll}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Clear History
+            </Button>
+            <Button
+              variant="outline"
+              asChild
+            >
+              <Link to="/analyze" onClick={() => devLog('history-new-analysis')}>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                New Analysis
+              </Link>
+            </Button>
+          </div>
         </motion.div>
 
         {/* History List */}
@@ -144,6 +170,9 @@ export default function HistoryPage() {
                               Paid
                             </Badge>
                           )}
+                          <Badge variant="outline" className="shrink-0">
+                            {item.depth}
+                          </Badge>
                         </div>
                         <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
                           <span>{formatDate(item.timestamp)}</span>
@@ -162,6 +191,16 @@ export default function HistoryPage() {
                       </div>
                       
                       <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(item.id);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -255,9 +294,11 @@ export default function HistoryPage() {
                             variant="outline"
                             size="sm"
                             asChild
-                            onClick={() => devLog(`history-reanalyze-${item.id}`)}
                           >
-                            <Link to={`/analyze?repo=${encodeURIComponent(item.repoUrl)}`}>
+                            <Link 
+                              to={`/analyze?repo=${encodeURIComponent(item.repoUrl)}`}
+                              onClick={() => devLog(`history-reanalyze-${item.id}`)}
+                            >
                               <RefreshCw className="h-4 w-4 mr-2" />
                               Re-analyze
                             </Link>
@@ -266,9 +307,8 @@ export default function HistoryPage() {
                             variant="outline"
                             size="sm"
                             asChild
-                            onClick={() => devLog(`history-view-grants-${item.id}`)}
                           >
-                            <Link to="/grants">
+                            <Link to="/grants" onClick={() => devLog(`history-view-grants-${item.id}`)}>
                               View Matching Grants
                             </Link>
                           </Button>

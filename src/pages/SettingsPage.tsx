@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Settings, Save, RotateCcw, CheckCircle2, AlertCircle, Loader2, ExternalLink } from 'lucide-react';
+import { useAccount, useChainId } from 'wagmi';
+import { ConnectButton } from '@rainbow-me/rainbowkit';
+import { Settings, Save, RotateCcw, CheckCircle2, AlertCircle, Loader2, ExternalLink, Wallet, Bug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { Layout } from '@/components/Layout';
 import { 
   getSettings, 
@@ -14,11 +17,16 @@ import {
   DEPTH_OPTIONS,
   type AppSettings 
 } from '@/lib/settings';
-import { devLog } from '@/lib/config';
+import { getDebugMode, setDebugMode, devLog } from '@/lib/config';
+import { truncateAddress } from '@/lib/x402';
 import { toast } from 'sonner';
 
 export default function SettingsPage() {
+  const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  
   const [settings, setSettings] = useState<AppSettings>(getSettings);
+  const [debugMode, setDebugModeState] = useState(getDebugMode());
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState<string>('');
   const [hasChanges, setHasChanges] = useState(false);
@@ -28,7 +36,8 @@ export default function SettingsPage() {
     setHasChanges(
       saved.apiBaseUrl !== settings.apiBaseUrl ||
       saved.defaultChainHint !== settings.defaultChainHint ||
-      saved.defaultDepth !== settings.defaultDepth
+      saved.defaultDepth !== settings.defaultDepth ||
+      saved.showDebugLogs !== settings.showDebugLogs
     );
   }, [settings]);
 
@@ -43,8 +52,18 @@ export default function SettingsPage() {
     devLog('settings-reset');
     const defaults = resetSettings();
     setSettings(defaults);
+    setDebugModeState(false);
+    setDebugMode(false);
     setHasChanges(false);
     toast.info('Settings reset to defaults');
+  };
+
+  const handleDebugToggle = (enabled: boolean) => {
+    devLog('settings-debug-toggle', enabled);
+    setDebugModeState(enabled);
+    setDebugMode(enabled);
+    setSettings({ ...settings, showDebugLogs: enabled });
+    toast.info(enabled ? 'Debug mode enabled' : 'Debug mode disabled');
   };
 
   const handleTestConnection = async () => {
@@ -61,7 +80,10 @@ export default function SettingsPage() {
       if (response.ok) {
         const data = await response.json();
         setTestStatus('success');
-        setTestMessage(`Connected! API v${data.version || 'unknown'} - ${data.endpoints?.length || 0} endpoints available`);
+        const version = data.version || 'unknown';
+        const network = data.network || 'unknown';
+        const price = data.price ? `$${data.price}` : '';
+        setTestMessage(`Connected! v${version} on ${network} ${price ? `- ${price}/call` : ''}`);
       } else {
         setTestStatus('error');
         setTestMessage(`HTTP ${response.status}: ${response.statusText}`);
@@ -75,6 +97,16 @@ export default function SettingsPage() {
   const openHealthPage = () => {
     devLog('settings-open-health');
     window.open(`${settings.apiBaseUrl}/health`, '_blank');
+  };
+
+  const getNetworkName = (id: number) => {
+    const networks: Record<number, string> = {
+      43113: 'Avalanche Fuji',
+      43114: 'Avalanche',
+      1: 'Ethereum',
+      137: 'Polygon',
+    };
+    return networks[id] || `Chain ${id}`;
   };
 
   return (
@@ -92,11 +124,63 @@ export default function SettingsPage() {
           </div>
           <h1 className="text-3xl sm:text-4xl font-bold mb-4">Settings</h1>
           <p className="text-muted-foreground">
-            Configure your API connection and default analysis options.
+            Configure your API connection, wallet, and default analysis options.
           </p>
         </motion.div>
 
         <div className="max-w-2xl mx-auto space-y-6">
+          {/* Wallet Status */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.05 }}
+          >
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Wallet className="h-5 w-5" />
+                  Wallet
+                </CardTitle>
+                <CardDescription>
+                  Your connected wallet details and network status.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {isConnected && address ? (
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center p-3 rounded-lg bg-secondary/50">
+                      <span className="text-sm text-muted-foreground">Address</span>
+                      <span className="font-mono text-sm">{truncateAddress(address)}</span>
+                    </div>
+                    <div className="flex justify-between items-center p-3 rounded-lg bg-secondary/50">
+                      <span className="text-sm text-muted-foreground">Network</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">{getNetworkName(chainId)}</span>
+                        {chainId === 43113 ? (
+                          <Badge variant="success">Correct</Badge>
+                        ) : (
+                          <Badge variant="destructive">Switch to Fuji</Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center p-3 rounded-lg bg-secondary/50">
+                      <span className="text-sm text-muted-foreground">Chain ID</span>
+                      <span className="font-mono text-sm">{chainId}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-6 border border-dashed border-border rounded-lg">
+                    <Wallet className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Connect your wallet to use paid features
+                    </p>
+                    <ConnectButton />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+
           {/* API Configuration */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -214,6 +298,39 @@ export default function SettingsPage() {
                       </button>
                     ))}
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Debug Mode */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+          >
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Bug className="h-5 w-5" />
+                  Debug Mode
+                </CardTitle>
+                <CardDescription>
+                  Enable debug logging to see x402 payment payloads in the console.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/50">
+                  <div>
+                    <p className="font-medium text-sm">Show Debug Logs</p>
+                    <p className="text-xs text-muted-foreground">
+                      Logs 402 responses and signed payloads (never logs private keys)
+                    </p>
+                  </div>
+                  <Switch
+                    checked={debugMode}
+                    onCheckedChange={handleDebugToggle}
+                  />
                 </div>
               </CardContent>
             </Card>

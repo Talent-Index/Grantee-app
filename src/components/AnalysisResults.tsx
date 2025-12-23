@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { 
   Star, 
   GitFork, 
@@ -10,12 +11,13 @@ import {
   Activity,
   Shield,
   Target,
-  Lightbulb
+  Lightbulb,
+  ExternalLink
 } from 'lucide-react';
-import type { AnalysisResult } from '@/lib/fetchWith402';
+import type { RepoAnalysisResult } from '@/lib/types';
 
 interface AnalysisResultsProps {
-  result: AnalysisResult['result'];
+  result: RepoAnalysisResult;
 }
 
 export function AnalysisResults({ result }: AnalysisResultsProps) {
@@ -202,6 +204,41 @@ export function AnalysisResults({ result }: AnalysisResultsProps) {
                   ))}
                 </ul>
               </div>
+
+              {/* Grant Matches */}
+              {result.grantFit.matches && result.grantFit.matches.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Top Matches</h4>
+                  <div className="space-y-2">
+                    {result.grantFit.matches.slice(0, 5).map((match, i) => (
+                      <div key={i} className="p-3 rounded-lg bg-secondary/50 border border-border/50">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-medium text-sm">{match.program}</span>
+                          <Badge variant="primary">{match.fitScore}%</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mb-2">{match.ecosystem}</p>
+                        {match.why && match.why.length > 0 && (
+                          <ul className="text-xs text-muted-foreground space-y-0.5">
+                            {match.why.slice(0, 2).map((reason, j) => (
+                              <li key={j}>• {reason}</li>
+                            ))}
+                          </ul>
+                        )}
+                        {match.url && (
+                          <Button 
+                            variant="link" 
+                            size="sm" 
+                            className="h-auto p-0 mt-2"
+                            onClick={() => window.open(match.url, '_blank')}
+                          >
+                            Apply <ExternalLink className="h-3 w-3 ml-1" />
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

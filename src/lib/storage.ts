@@ -1,4 +1,4 @@
-import type { AnalysisResult } from './fetchWith402';
+import type { RepoAnalysisResult, SettlementResponse, HistoryItem } from './types';
 
 const STORAGE_KEYS = {
   UNLOCKED: 'grantee_unlocked',
@@ -6,13 +6,8 @@ const STORAGE_KEYS = {
   ANALYSIS_HISTORY: 'grantee_analysis_history',
 } as const;
 
-export interface AnalysisHistoryItem {
-  id: string;
-  repoUrl: string;
-  timestamp: number;
-  result: AnalysisResult['result'];
-  settlement: AnalysisResult['settlement'];
-}
+// Re-export HistoryItem for external use
+export type { HistoryItem };
 
 /**
  * Check if grants are unlocked
@@ -39,7 +34,7 @@ export function unlockGrants(payerAddress: string): void {
 /**
  * Get analysis history
  */
-export function getAnalysisHistory(): AnalysisHistoryItem[] {
+export function getAnalysisHistory(): HistoryItem[] {
   try {
     const data = localStorage.getItem(STORAGE_KEYS.ANALYSIS_HISTORY);
     return data ? JSON.parse(data) : [];
@@ -53,15 +48,19 @@ export function getAnalysisHistory(): AnalysisHistoryItem[] {
  */
 export function addToHistory(
   repoUrl: string,
-  result: AnalysisResult['result'],
-  settlement: AnalysisResult['settlement']
-): AnalysisHistoryItem {
+  result: RepoAnalysisResult,
+  settlement?: SettlementResponse,
+  depth: 'light' | 'full' = 'light',
+  chainHint: string = 'avalanche-fuji'
+): HistoryItem {
   const history = getAnalysisHistory();
   
-  const item: AnalysisHistoryItem = {
+  const item: HistoryItem = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     repoUrl,
     timestamp: Date.now(),
+    depth,
+    chainHint,
     result,
     settlement,
   };
@@ -81,9 +80,25 @@ export function addToHistory(
 /**
  * Get single history item by ID
  */
-export function getHistoryItem(id: string): AnalysisHistoryItem | null {
+export function getHistoryItem(id: string): HistoryItem | null {
   const history = getAnalysisHistory();
   return history.find(item => item.id === id) || null;
+}
+
+/**
+ * Delete a history item by ID
+ */
+export function deleteHistoryItem(id: string): void {
+  const history = getAnalysisHistory();
+  const filtered = history.filter(item => item.id !== id);
+  localStorage.setItem(STORAGE_KEYS.ANALYSIS_HISTORY, JSON.stringify(filtered));
+}
+
+/**
+ * Clear all history
+ */
+export function clearHistory(): void {
+  localStorage.removeItem(STORAGE_KEYS.ANALYSIS_HISTORY);
 }
 
 /**
