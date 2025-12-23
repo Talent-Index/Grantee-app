@@ -7,10 +7,11 @@ import { Button } from '@/components/ui/button';
 import { devLog } from '@/lib/config';
 
 const navItems = [
-  { label: 'Home', href: '/' },
+  { label: 'Dashboard', href: '/dashboard' },
   { label: 'Analyze', href: '/analyze' },
   { label: 'Grants', href: '/grants' },
   { label: 'History', href: '/history' },
+  { label: 'Settings', href: '/settings' },
 ];
 
 export function Navbar() {

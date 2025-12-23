@@ -10,14 +10,12 @@ import {
   ArrowRight,
   Shield,
   DollarSign,
-  Lock,
-  Unlock
+  ExternalLink
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Layout } from '@/components/Layout';
-import { ConfigWarning } from '@/components/ConfigWarning';
-import { isGrantsUnlocked } from '@/lib/storage';
+import { getSettings } from '@/lib/settings';
 import { devLog } from '@/lib/config';
 
 const features = [
@@ -45,7 +43,7 @@ const features = [
 
 export default function HomePage() {
   const { isConnected } = useAccount();
-  const unlocked = isGrantsUnlocked();
+  const settings = getSettings();
 
   return (
     <Layout>
@@ -76,9 +74,9 @@ export default function HomePage() {
               transition={{ delay: 0.2 }}
               className="text-4xl sm:text-5xl lg:text-6xl font-bold mb-6 leading-tight"
             >
-              Grant Intelligence &{' '}
-              <span className="gradient-text">Capital Access</span>{' '}
-              API
+              Build more.{' '}
+              <span className="gradient-text">Paperwork less.</span>{' '}
+              Get funded.
             </motion.h1>
 
             {/* Description */}
@@ -134,18 +132,20 @@ export default function HomePage() {
                 onClick={() => devLog('hero-grants')}
               >
                 <Link to="/grants">
-                  {unlocked ? (
-                    <>
-                      <Unlock className="h-4 w-4 mr-2" />
-                      Explore Grants
-                    </>
-                  ) : (
-                    <>
-                      <Lock className="h-4 w-4 mr-2" />
-                      Explore Grants
-                    </>
-                  )}
+                  Browse Grants
                 </Link>
+              </Button>
+              
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={() => {
+                  devLog('hero-api-status');
+                  window.open(`${settings.apiBaseUrl}/health`, '_blank');
+                }}
+              >
+                <ExternalLink className="h-4 w-4 mr-2" />
+                Check API Status
               </Button>
             </motion.div>
 
