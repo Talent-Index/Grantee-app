@@ -90,15 +90,6 @@ export default function HomePage() {
               funding opportunities — all powered by seamless x402 micropayments.
             </motion.p>
 
-            {/* Config Warning */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.35 }}
-              className="max-w-xl mx-auto mb-8"
-            >
-              <ConfigWarning />
-            </motion.div>
 
             {/* CTAs */}
             <motion.div
