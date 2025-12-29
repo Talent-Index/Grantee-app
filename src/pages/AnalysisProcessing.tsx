@@ -38,6 +38,9 @@ export default function AnalysisProcessing() {
   
   const { getAnalysis, setAnalysis } = useRepoAnalysis();
   
+  // Get analysis using stable key (repoUrl)
+  const getCachedAnalysis = useCallback(() => getAnalysis(repoUrl), [getAnalysis, repoUrl]);
+  
   const [currentStep, setCurrentStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -94,7 +97,8 @@ export default function AnalysisProcessing() {
       if (data.status === 'error') {
         setError(data.error || 'Analysis failed. Please try again.');
         setAnalysis({
-          ...getAnalysis(),
+          ...getCachedAnalysis(),
+          repoUrl,
           status: 'error',
           errors: [data.error || 'Unknown error'],
         });
@@ -116,7 +120,7 @@ export default function AnalysisProcessing() {
     } finally {
       isPolling.current = false;
     }
-  }, [jobId, repoUrl, navigate, settings.apiBaseUrl, setAnalysis, getAnalysis]);
+  }, [jobId, repoUrl, navigate, settings.apiBaseUrl, setAnalysis, getCachedAnalysis]);
 
   // Start polling on mount
   useEffect(() => {
@@ -126,7 +130,7 @@ export default function AnalysisProcessing() {
     }
 
     // Check if already complete in cache
-    const cached = getAnalysis();
+    const cached = getCachedAnalysis();
     if (cached.status === 'complete' && cached.repoUrl === repoUrl) {
       navigate(`/insights?repoUrl=${encodeURIComponent(repoUrl)}&jobId=${jobId}`);
       return;
@@ -135,7 +139,7 @@ export default function AnalysisProcessing() {
     // Start polling
     pollStartTime.current = Date.now();
     pollStatus();
-  }, [jobId, repoUrl, getAnalysis, navigate, pollStatus]);
+  }, [jobId, repoUrl, getCachedAnalysis, navigate, pollStatus]);
 
   // Timer for elapsed seconds display
   useEffect(() => {

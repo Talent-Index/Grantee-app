@@ -131,16 +131,20 @@ const NICHE_KEYWORDS: Record<string, string[]> = {
   RWA: ["rwa", "real-world", "tokenization", "asset", "enterprise", "compliance"],
 };
 
-// Derive niche from topics, languages, and repo name
+// Derive niche from topics, languages, and repo name (safe, handles nullish)
 export function deriveNiche(
-  topics: string[],
-  languages: Record<string, number>,
-  repoName: string
+  topics: string[] | null | undefined,
+  languages: Record<string, number> | null | undefined,
+  repoName: string | null | undefined
 ): string {
+  const safeTopics = topics ?? [];
+  const safeLanguages = languages ?? {};
+  const safeName = repoName ?? "";
+  
   const searchText = [
-    ...topics.map((t) => t.toLowerCase()),
-    repoName.toLowerCase(),
-    ...Object.keys(languages).map((l) => l.toLowerCase()),
+    ...safeTopics.map((t) => (t ?? "").toLowerCase()),
+    safeName.toLowerCase(),
+    ...Object.keys(safeLanguages).map((l) => l.toLowerCase()),
   ].join(" ");
 
   for (const [niche, keywords] of Object.entries(NICHE_KEYWORDS)) {
@@ -150,7 +154,8 @@ export function deriveNiche(
   }
 
   // Fallback based on primary language
-  const primaryLang = Object.entries(languages).sort(([, a], [, b]) => b - a)[0]?.[0] || "";
+  const langEntries = Object.entries(safeLanguages);
+  const primaryLang = langEntries.sort(([, a], [, b]) => b - a)[0]?.[0] || "";
   if (["Solidity", "Vyper", "Move", "Rust"].includes(primaryLang)) {
     return "Infrastructure";
   }
@@ -161,30 +166,37 @@ export function deriveNiche(
   return "General";
 }
 
-// Get grant filters based on analysis
-export function getGrantFiltersFromAnalysis(analysis: RepoAnalysis): Record<string, string> {
+// Get grant filters based on analysis (safe, handles nullish values)
+export function getGrantFiltersFromAnalysis(analysis: RepoAnalysis | null | undefined): Record<string, string> {
   const filters: Record<string, string> = {};
+  
+  if (!analysis) return filters;
 
-  if (analysis.summary.niche && analysis.summary.niche !== "Unknown") {
-    filters.niche = analysis.summary.niche;
+  const niche = analysis.summary?.niche;
+  if (niche && niche !== "Unknown") {
+    filters.niche = niche;
   }
 
-  if (analysis.stack.primaryLanguage && analysis.stack.primaryLanguage !== "Unknown") {
-    filters.lang = analysis.stack.primaryLanguage;
+  const primaryLanguage = analysis.stack?.primaryLanguage;
+  if (primaryLanguage && primaryLanguage !== "Unknown") {
+    filters.lang = primaryLanguage;
   }
 
-  if (analysis.activity.commits30d > 0) {
-    filters.commits30d = String(analysis.activity.commits30d);
+  const commits30d = analysis.activity?.commits30d;
+  if (commits30d && commits30d > 0) {
+    filters.commits30d = String(commits30d);
   }
 
-  if (analysis.summary.matchScore > 0) {
-    filters.scoreMin = String(Math.max(0, analysis.summary.matchScore - 20));
+  const matchScore = analysis.summary?.matchScore;
+  if (matchScore && matchScore > 0) {
+    filters.scoreMin = String(Math.max(0, matchScore - 20));
   }
 
-  // Add ecosystem hints from topics
-  const ecosystemTopics = analysis.repo.topics.filter((t) =>
+  // Add ecosystem hints from topics (safe access)
+  const topics = analysis.repo?.topics ?? [];
+  const ecosystemTopics = topics.filter((t) =>
     ["ethereum", "avalanche", "solana", "polygon", "arbitrum", "optimism", "base", "starknet"].includes(
-      t.toLowerCase()
+      (t ?? "").toLowerCase()
     )
   );
   if (ecosystemTopics.length > 0) {
@@ -194,9 +206,19 @@ export function getGrantFiltersFromAnalysis(analysis: RepoAnalysis): Record<stri
   return filters;
 }
 
-// Build grants URL with filters
-export function buildGrantsUrlFromAnalysis(analysis: RepoAnalysis): string {
-  const filters = getGrantFiltersFromAnalysis(analysis);
-  const params = new URLSearchParams(filters);
-  return `/grants?${params.toString()}`;
+// Build grants URL with filters (safe, never throws)
+export function buildGrantsUrlFromAnalysis(analysis: RepoAnalysis | null | undefined): string {
+  if (!analysis) return '/grants';
+  
+  const filters = getGrantFiltersFromAnalysis(analysis) ?? {};
+  const safeParams = Object.entries(filters).reduce((acc, [k, v]) => {
+    if (v !== undefined && v !== null && String(v).length > 0) {
+      acc[k] = String(v);
+    }
+    return acc;
+  }, {} as Record<string, string>);
+  
+  const params = new URLSearchParams(safeParams);
+  const queryString = params.toString();
+  return queryString ? `/grants?${queryString}` : '/grants';
 }
