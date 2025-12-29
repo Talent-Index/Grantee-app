@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -21,13 +22,16 @@ import { Badge } from '@/components/ui/badge';
 import { Layout } from '@/components/Layout';
 import { useRepoAnalysis } from '@/hooks/useRepoAnalysis';
 import { emptyAnalysis, buildGrantsUrlFromAnalysis } from '@/types/repoAnalysis';
+import { getSettings } from '@/lib/settings';
+import type { RepoAnalysis } from '@/types/repoAnalysis';
 
-// Contributor momentum trend
-function getMomentumTrend(commits7d: number): { label: string; icon: React.ReactNode; color: string } {
-  if (commits7d >= 10) {
+// Contributor momentum trend based on commits30d
+// Hot >= 30, Warm 10-29, Cold 0-9
+function getMomentumTrend(commits30d: number): { label: string; icon: React.ReactNode; color: string } {
+  if (commits30d >= 30) {
     return { label: 'Hot', icon: <Flame className="h-4 w-4" />, color: 'text-orange-500' };
   }
-  if (commits7d >= 3) {
+  if (commits30d >= 10) {
     return { label: 'Warm', icon: <Sun className="h-4 w-4" />, color: 'text-yellow-500' };
   }
   return { label: 'Cold', icon: <Snowflake className="h-4 w-4" />, color: 'text-blue-400' };
@@ -36,19 +40,68 @@ function getMomentumTrend(commits7d: number): { label: string; icon: React.React
 export default function InsightsPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const settings = getSettings();
   const repoUrl = searchParams.get('repoUrl') || '';
+  const jobId = searchParams.get('jobId') || '';
   
-  const { getAnalysis } = useRepoAnalysis();
-  const analysis = getAnalysis();
+  const { getAnalysis, setAnalysis } = useRepoAnalysis();
+  const [isLoading, setIsLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // Check if we have a valid analysis
-  const isComplete = analysis.status === 'complete';
-  const isLoading = analysis.status === 'processing' || analysis.status === 'paid';
-  const hasError = analysis.status === 'error';
+  // Get cached analysis
+  const cachedAnalysis = getAnalysis();
+  const analysis = cachedAnalysis.status === 'complete' ? cachedAnalysis : null;
+
+  // Fetch result if not cached
+  useEffect(() => {
+    if (analysis || !jobId) return;
+
+    const fetchResult = async () => {
+      setIsLoading(true);
+      try {
+        const response = await fetch(
+          `${settings.apiBaseUrl}/api/analyze/result?jobId=${encodeURIComponent(jobId)}`,
+          {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        
+        if (data.status === 'complete' && data.analysis) {
+          const result: RepoAnalysis = {
+            ...data.analysis,
+            status: 'complete',
+            repoUrl,
+          };
+          setAnalysis(result);
+        } else if (data.status === 'error') {
+          setFetchError(data.error || 'Analysis failed');
+        } else {
+          // Still processing, redirect back to analysis page
+          navigate(`/analysis?repoUrl=${encodeURIComponent(repoUrl)}&jobId=${jobId}`);
+        }
+      } catch (err) {
+        console.error('[Insights] Fetch failed:', err);
+        setFetchError(err instanceof Error ? err.message : 'Failed to load analysis');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchResult();
+  }, [jobId, analysis, repoUrl, settings.apiBaseUrl, setAnalysis, navigate]);
 
   // Safe access with defaults
-  const safeAnalysis = isComplete ? analysis : emptyAnalysis(repoUrl);
-  
+  const safeAnalysis = analysis ?? emptyAnalysis(repoUrl);
+  const isComplete = analysis?.status === 'complete';
+  const hasError = cachedAnalysis.status === 'error' || !!fetchError;
+
   const {
     summary: { niche, matchScore },
     stack: { primaryLanguage },
@@ -56,10 +109,7 @@ export default function InsightsPage() {
     repo: { owner, name, stars, forks, topics },
   } = safeAnalysis;
 
-  // Calculate commits7d (estimate from 30d if not available)
-  const commits7d = (safeAnalysis.activity as any).commits7d ?? Math.round(commits30d / 4);
-  
-  const momentum = getMomentumTrend(commits7d);
+  const momentum = getMomentumTrend(commits30d);
   const lastCommitFormatted = lastCommitDate 
     ? new Date(lastCommitDate).toLocaleDateString() 
     : 'Unknown';
@@ -78,12 +128,7 @@ export default function InsightsPage() {
           <Card>
             <CardContent className="py-12 text-center">
               <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-primary" />
-              <p className="text-muted-foreground">Loading analysis...</p>
-              <Button variant="link" asChild className="mt-4">
-                <Link to={`/analysis?repoUrl=${encodeURIComponent(repoUrl)}`}>
-                  View progress
-                </Link>
-              </Button>
+              <p className="text-muted-foreground">Loading analysis results...</p>
             </CardContent>
           </Card>
         </div>
@@ -93,6 +138,8 @@ export default function InsightsPage() {
 
   // Error or no data state
   if (hasError || !isComplete) {
+    const errorMessage = fetchError || cachedAnalysis.errors?.[0] || 'Please analyze a repository first.';
+    
     return (
       <Layout>
         <div className="container mx-auto px-4 py-12 max-w-2xl">
@@ -102,11 +149,7 @@ export default function InsightsPage() {
                 <AlertCircle className="h-6 w-6 text-destructive" />
               </div>
               <h2 className="text-lg font-semibold mb-2">No Analysis Found</h2>
-              <p className="text-muted-foreground text-sm mb-6">
-                {hasError 
-                  ? analysis.errors[0] || 'An error occurred during analysis.'
-                  : 'Please analyze a repository first.'}
-              </p>
+              <p className="text-muted-foreground text-sm mb-6">{errorMessage}</p>
               <Button asChild>
                 <Link to="/analyze">
                   <Github className="h-4 w-4 mr-2" />
@@ -181,9 +224,9 @@ export default function InsightsPage() {
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 text-muted-foreground text-sm mb-1">
                   <GitCommit className="h-4 w-4" />
-                  Commits (7d)
+                  Commits (30d)
                 </div>
-                <p className="text-lg font-semibold">{commits7d}</p>
+                <p className="text-lg font-semibold">{commits30d}</p>
               </CardContent>
             </Card>
           </motion.div>
