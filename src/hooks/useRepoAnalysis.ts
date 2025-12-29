@@ -86,8 +86,8 @@ export function useRepoAnalysis() {
       },
       activity: {
         commits30d: result.activity?.commits30d ?? 0,
-        commits90d: result.activity?.commits90d ?? 0,
-        contributors: result.activity?.contributors ?? 0,
+        commits90d: (result.activity as any)?.commits90d ?? 0,
+        contributors: (result.activity as any)?.contributors ?? 0,
         lastCommitDate: result.activity?.lastCommit ?? null,
       },
       stack: {
