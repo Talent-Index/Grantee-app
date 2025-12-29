@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAccount, useWalletClient, useChainId, useSwitchChain } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
@@ -40,6 +40,7 @@ type PaywallStep = 'info' | 'signing' | 'settling' | 'success' | 'error';
 
 export default function AnalyzePage() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const chainId = useChainId();
@@ -307,21 +308,21 @@ export default function AnalyzePage() {
 
   const handleAnalysisSuccess = (data: AnalysisResponse) => {
     devLog('analyze-success', data);
-    setResult(data);
-    setRawJson(JSON.stringify(data, null, 2));
-    setStep('results');
-    setIsLoading(false);
-
+    
     // Unlock grants and save to history
     if ((data.success || data.settlement?.success) && address) {
       unlockGrants(address);
       addToHistory(repoUrl.trim(), data.result, data.settlement, depth, chainHint);
-      toast.success('Analysis complete! Grants explorer is now unlocked.');
+      toast.success('Payment successful! Analyzing repository...');
     } else if (data.result) {
-      // Still save to history even without payment success
       addToHistory(repoUrl.trim(), data.result, data.settlement, depth, chainHint);
-      toast.success('Analysis complete!');
     }
+
+    // Navigate to processing screen instead of showing results directly
+    // This prevents blank screens and provides a better UX
+    const encodedUrl = encodeURIComponent(repoUrl.trim());
+    const jobId = `job_${Date.now()}`;
+    navigate(`/analysis?repoUrl=${encodedUrl}&jobId=${jobId}`);
   };
 
   const handleError = (err: unknown) => {

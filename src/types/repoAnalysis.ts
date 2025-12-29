@@ -23,6 +23,7 @@ export interface RepoInfo {
 }
 
 export interface RepoActivity {
+  commits7d: number;
   commits30d: number;
   commits90d: number;
   contributors: number;
@@ -93,6 +94,7 @@ export const emptyAnalysis = (repoUrl = ""): RepoAnalysis => ({
     lastPush: null,
   },
   activity: {
+    commits7d: 0,
     commits30d: 0,
     commits90d: 0,
     contributors: 0,
@@ -171,6 +173,10 @@ export function getGrantFiltersFromAnalysis(analysis: RepoAnalysis): Record<stri
 
   if (analysis.stack.primaryLanguage && analysis.stack.primaryLanguage !== "Unknown") {
     filters.lang = analysis.stack.primaryLanguage;
+  }
+
+  if (analysis.activity.commits7d > 0) {
+    filters.commits7d = String(analysis.activity.commits7d);
   }
 
   if (analysis.summary.matchScore > 0) {
