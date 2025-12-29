@@ -306,47 +306,28 @@ export default function AnalyzePage() {
     }
   };
 
-  const handleAnalysisSuccess = async (data: AnalysisResponse) => {
+  const handleAnalysisSuccess = (data: AnalysisResponse) => {
     devLog('analyze-success', data);
     
     // Unlock grants and save to history
     if ((data.success || data.settlement?.success) && address) {
       unlockGrants(address);
       addToHistory(repoUrl.trim(), data.result, data.settlement, depth, chainHint);
-      toast.success('Payment successful! Starting analysis...');
+      toast.success('Analysis complete!');
     } else if (data.result) {
       addToHistory(repoUrl.trim(), data.result, data.settlement, depth, chainHint);
     }
 
-    // Call backend to start analysis job
-    try {
-      const startResponse = await fetch(`${settings.apiBaseUrl}/api/analyze/start`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify({ repoUrl: repoUrl.trim() }),
-      });
-
-      if (!startResponse.ok) {
-        throw new Error(`Failed to start analysis: HTTP ${startResponse.status}`);
-      }
-
-      const { jobId } = await startResponse.json();
-      
-      if (!jobId) {
-        throw new Error('No job ID returned from backend');
-      }
-
-      // Navigate to processing screen
-      const encodedUrl = encodeURIComponent(repoUrl.trim());
-      navigate(`/analysis?repoUrl=${encodedUrl}&jobId=${jobId}`);
-    } catch (err) {
-      console.error('[Grantee] Failed to start analysis:', err);
-      toast.error('Failed to start analysis. Please try again.');
+    // The backend /v1/github/analyze-paid already returns the analysis result
+    // Navigate directly to insights with the result
+    if (data.result) {
+      setResult(data);
+      setRawJson(JSON.stringify(data, null, 2));
+      setStep('results');
+    } else {
+      // Fallback: if no result in response, show error
       setStep('error');
-      setError(err instanceof Error ? err.message : 'Failed to start analysis');
+      setError('Analysis completed but no result data received.');
     }
   };
 
