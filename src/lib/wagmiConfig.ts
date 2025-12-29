@@ -1,20 +1,27 @@
 // src/lib/wagmiConfig.ts
-import { getDefaultConfig } from "@rainbow-me/rainbowkit";
-import { avalancheFuji, avalanche } from "wagmi/chains";
+import { getDefaultConfig } from '@rainbow-me/rainbowkit';
+import { http } from 'wagmi';
+import { avalanche, avalancheFuji } from 'wagmi/chains';
 
-// NOTE: You MUST set VITE_WALLETCONNECT_PROJECT_ID in Vercel + local .env
 const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
 
-if (!projectId) {
-  // This prevents silent failures where RainbowKit never shows
-  console.warn(
-    "[wagmiConfig] Missing VITE_WALLETCONNECT_PROJECT_ID. Wallet connect will not work."
-  );
+// ✅ Supported chains (Fuji + Mainnet)
+export const chains = [avalancheFuji, avalanche] as const;
+
+export const SUPPORTED_CHAIN_IDS = chains.map((c) => c.id) as number[];
+
+export function isSupportedChain(chainId: number) {
+  return SUPPORTED_CHAIN_IDS.includes(chainId);
 }
 
+// ✅ Wagmi + RainbowKit config
 export const wagmiConfig = getDefaultConfig({
-  appName: "Grantees",
-  projectId: projectId || "MISSING_PROJECT_ID",
-  chains: [avalancheFuji, avalanche],
+  appName: 'Grantee',
+  projectId: projectId || 'MISSING_WALLETCONNECT_PROJECT_ID',
+  chains,
+  transports: {
+    [avalancheFuji.id]: http(),
+    [avalanche.id]: http(),
+  },
   ssr: false,
 });
