@@ -27,13 +27,18 @@ interface AnalysisResultsProps {
 }
 
 export function AnalysisResults({ result }: AnalysisResultsProps) {
-  const qualityColor = result.codeQuality.score >= 80 
+  // Safe accessors - NEVER crash on undefined
+  const codeQuality = result?.codeQuality ?? { score: 0, notes: [] };
+  const stars = result?.stars ?? 0;
+  const forks = result?.forks ?? 0;
+
+  const qualityColor = codeQuality.score >= 80 
     ? 'text-success' 
-    : result.codeQuality.score >= 60 
+    : codeQuality.score >= 60 
       ? 'text-warning' 
       : 'text-destructive';
 
-  // Generate Signal Intelligence data
+  // Generate Signal Intelligence data with safe null handling
   const signals = useMemo(() => extractSignals(result), [result]);
   const scores = useMemo(() => calculateScores(signals, result), [signals, result]);
   const opportunityCard = useMemo(() => generateOpportunityCard(result, signals, scores), [result, signals, scores]);
@@ -52,7 +57,7 @@ export function AnalysisResults({ result }: AnalysisResultsProps) {
               <Star className="h-5 w-5 text-warning" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{result.stars.toLocaleString()}</p>
+              <p className="text-2xl font-bold">{stars.toLocaleString()}</p>
               <p className="text-xs text-muted-foreground">Stars</p>
             </div>
           </div>
@@ -64,7 +69,7 @@ export function AnalysisResults({ result }: AnalysisResultsProps) {
               <GitFork className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{result.forks.toLocaleString()}</p>
+              <p className="text-2xl font-bold">{forks.toLocaleString()}</p>
               <p className="text-xs text-muted-foreground">Forks</p>
             </div>
           </div>
