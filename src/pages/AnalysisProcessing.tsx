@@ -14,8 +14,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Layout } from '@/components/Layout';
 import { useRepoAnalysis } from '@/hooks/useRepoAnalysis';
-import { getSettings } from '@/lib/settings';
-import type { RepoAnalysis } from '@/types/repoAnalysis';
 
 type ProcessingStep = 'metadata' | 'languages' | 'activity' | 'finalizing';
 
@@ -26,17 +24,12 @@ const STEPS: { id: ProcessingStep; label: string }[] = [
   { id: 'finalizing', label: 'Generating insights' },
 ];
 
-const POLL_INTERVAL = 2000; // 2 seconds
-const MAX_POLL_TIME = 60000; // 60 seconds
-
 export default function AnalysisProcessing() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const settings = getSettings();
   const repoUrl = searchParams.get('repoUrl') || '';
-  const jobId = searchParams.get('jobId') || '';
   
-  const { getAnalysis, setAnalysis } = useRepoAnalysis();
+  const { getAnalysis } = useRepoAnalysis();
   
   // Get analysis using stable key (repoUrl)
   const getCachedAnalysis = useCallback(() => getAnalysis(repoUrl), [getAnalysis, repoUrl]);
@@ -44,102 +37,62 @@ export default function AnalysisProcessing() {
   const [currentStep, setCurrentStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const pollStartTime = useRef<number>(Date.now());
-  const isPolling = useRef(false);
+  const stepInterval = useRef<NodeJS.Timeout | null>(null);
 
   // Parse repo name from URL
   const repoName = repoUrl.match(/github\.com\/([^/]+\/[^/]+)/)?.[1] || 'Repository';
 
-  // Poll backend for analysis status
-  const pollStatus = useCallback(async () => {
-    if (!jobId || isPolling.current) return;
-    
-    isPolling.current = true;
-    
-    try {
-      const response = await fetch(
-        `${settings.apiBaseUrl}/api/analyze/status?jobId=${encodeURIComponent(jobId)}`,
-        {
-          method: 'GET',
-          headers: { 'Accept': 'application/json' },
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      
-      // Update step progress based on status
-      if (data.step) {
-        const stepIndex = STEPS.findIndex(s => s.id === data.step);
-        if (stepIndex >= 0) {
-          setCurrentStep(stepIndex);
-        }
-      } else if (data.status === 'processing') {
-        // Increment step gradually if no step info
-        setCurrentStep(prev => Math.min(prev + 1, STEPS.length - 2));
-      }
-
-      if (data.status === 'complete' && data.analysis) {
-        // Store completed analysis in cache
-        const analysis: RepoAnalysis = {
-          ...data.analysis,
-          status: 'complete',
-          repoUrl,
-        };
-        setAnalysis(analysis);
-        navigate(`/insights?repoUrl=${encodeURIComponent(repoUrl)}&jobId=${jobId}`);
-        return;
-      }
-
-      if (data.status === 'error') {
-        setError(data.error || 'Analysis failed. Please try again.');
-        setAnalysis({
-          ...getCachedAnalysis(),
-          repoUrl,
-          status: 'error',
-          errors: [data.error || 'Unknown error'],
-        });
-        return;
-      }
-
-      // Check timeout
-      const elapsed = Date.now() - pollStartTime.current;
-      if (elapsed >= MAX_POLL_TIME) {
-        setError('Analysis timed out. Please try again.');
-        return;
-      }
-
-      // Continue polling
-      setTimeout(pollStatus, POLL_INTERVAL);
-    } catch (err) {
-      console.error('[Analysis] Poll failed:', err);
-      setError(err instanceof Error ? err.message : 'Failed to check analysis status');
-    } finally {
-      isPolling.current = false;
-    }
-  }, [jobId, repoUrl, navigate, settings.apiBaseUrl, setAnalysis, getCachedAnalysis]);
-
-  // Start polling on mount
+  // Check cached analysis status - NO backend polling
   useEffect(() => {
-    if (!jobId) {
-      setError('Missing job ID. Please try analyzing again.');
+    if (!repoUrl) {
+      setError('Missing repository URL. Please try analyzing again.');
       return;
     }
 
     // Check if already complete in cache
     const cached = getCachedAnalysis();
     if (cached.status === 'complete' && cached.repoUrl === repoUrl) {
-      navigate(`/insights?repoUrl=${encodeURIComponent(repoUrl)}&jobId=${jobId}`);
+      navigate(`/insights?repoUrl=${encodeURIComponent(repoUrl)}`);
       return;
     }
 
-    // Start polling
-    pollStartTime.current = Date.now();
-    pollStatus();
-  }, [jobId, repoUrl, getCachedAnalysis, navigate, pollStatus]);
+    // If not complete and not in cache, redirect to analyze
+    if (cached.status === 'idle' || cached.status === 'error') {
+      setError('No analysis in progress. Please analyze again.');
+      return;
+    }
+
+    // Simulate progress while waiting for cache update
+    // (Analysis result should already be cached by AnalyzePage after payment)
+    stepInterval.current = setInterval(() => {
+      setCurrentStep(prev => {
+        if (prev >= STEPS.length - 1) {
+          // Check cache again
+          const current = getCachedAnalysis();
+          if (current.status === 'complete') {
+            navigate(`/insights?repoUrl=${encodeURIComponent(repoUrl)}`);
+          }
+          return prev;
+        }
+        return prev + 1;
+      });
+    }, 1500);
+
+    // Timeout after 10 seconds - analysis should already be cached
+    const timeout = setTimeout(() => {
+      const current = getCachedAnalysis();
+      if (current.status === 'complete') {
+        navigate(`/insights?repoUrl=${encodeURIComponent(repoUrl)}`);
+      } else {
+        setError('Analysis not found. Please try analyzing again.');
+      }
+    }, 10000);
+
+    return () => {
+      if (stepInterval.current) clearInterval(stepInterval.current);
+      clearTimeout(timeout);
+    };
+  }, [repoUrl, getCachedAnalysis, navigate]);
 
   // Timer for elapsed seconds display
   useEffect(() => {

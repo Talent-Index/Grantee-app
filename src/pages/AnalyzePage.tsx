@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
+import { useRepoAnalysis } from '@/hooks/useRepoAnalysis';
 import { motion } from 'framer-motion';
 import { useAccount, useWalletClient, useChainId, useSwitchChain } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
@@ -306,24 +307,30 @@ export default function AnalyzePage() {
     }
   };
 
+  // Get the analysis hook
+  const { completeAnalysis } = useRepoAnalysis();
+
   const handleAnalysisSuccess = (data: AnalysisResponse) => {
     devLog('analyze-success', data);
+    
+    const trimmedUrl = repoUrl.trim();
     
     // Unlock grants and save to history
     if ((data.success || data.settlement?.success) && address) {
       unlockGrants(address);
-      addToHistory(repoUrl.trim(), data.result, data.settlement, depth, chainHint);
+      addToHistory(trimmedUrl, data.result, data.settlement, depth, chainHint);
       toast.success('Analysis complete!');
     } else if (data.result) {
-      addToHistory(repoUrl.trim(), data.result, data.settlement, depth, chainHint);
+      addToHistory(trimmedUrl, data.result, data.settlement, depth, chainHint);
     }
 
-    // The backend /v1/github/analyze-paid already returns the analysis result
-    // Navigate directly to insights with the result
+    // Store analysis in cache and navigate to insights
     if (data.result) {
-      setResult(data);
-      setRawJson(JSON.stringify(data, null, 2));
-      setStep('results');
+      // Use completeAnalysis to cache the result properly
+      completeAnalysis({ result: data.result, success: true }, trimmedUrl);
+      
+      // Navigate to insights page with repoUrl
+      navigate(`/insights?repoUrl=${encodeURIComponent(trimmedUrl)}`);
     } else {
       // Fallback: if no result in response, show error
       setStep('error');

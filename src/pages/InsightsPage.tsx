@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -14,7 +13,6 @@ import {
   GitFork,
   ExternalLink,
   AlertCircle,
-  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,8 +20,6 @@ import { Badge } from '@/components/ui/badge';
 import { Layout } from '@/components/Layout';
 import { useRepoAnalysis } from '@/hooks/useRepoAnalysis';
 import { emptyAnalysis, buildGrantsUrlFromAnalysis } from '@/types/repoAnalysis';
-import { getSettings } from '@/lib/settings';
-import type { RepoAnalysis } from '@/types/repoAnalysis';
 
 // Contributor momentum trend based on commits30d
 // Hot >= 30, Warm 10-29, Cold 0-9
@@ -40,67 +36,18 @@ function getMomentumTrend(commits30d: number): { label: string; icon: React.Reac
 export default function InsightsPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const settings = getSettings();
   const repoUrl = searchParams.get('repoUrl') || '';
-  const jobId = searchParams.get('jobId') || '';
   
-  const { getAnalysis, setAnalysis } = useRepoAnalysis();
-  const [isLoading, setIsLoading] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  const { getAnalysis } = useRepoAnalysis();
 
-  // Get cached analysis using stable key (repoUrl)
+  // Get cached analysis using stable key (repoUrl) - NO backend fetching
   const cachedAnalysis = getAnalysis(repoUrl);
   const isComplete = cachedAnalysis.status === 'complete';
   const analysis = isComplete ? cachedAnalysis : null;
 
-  // Fetch result if not cached
-  useEffect(() => {
-    if (analysis || !jobId) return;
-
-    const fetchResult = async () => {
-      setIsLoading(true);
-      try {
-        const response = await fetch(
-          `${settings.apiBaseUrl}/api/analyze/result?jobId=${encodeURIComponent(jobId)}`,
-          {
-            method: 'GET',
-            headers: { 'Accept': 'application/json' },
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        
-        if (data.status === 'complete' && data.analysis) {
-          const result: RepoAnalysis = {
-            ...data.analysis,
-            status: 'complete',
-            repoUrl,
-          };
-          setAnalysis(result);
-        } else if (data.status === 'error') {
-          setFetchError(data.error || 'Analysis failed');
-        } else {
-          // Still processing, redirect back to analysis page
-          navigate(`/analysis?repoUrl=${encodeURIComponent(repoUrl)}&jobId=${jobId}`);
-        }
-      } catch (err) {
-        console.error('[Insights] Fetch failed:', err);
-        setFetchError(err instanceof Error ? err.message : 'Failed to load analysis');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchResult();
-  }, [jobId, analysis, repoUrl, settings.apiBaseUrl, setAnalysis, navigate]);
-
   // Safe access with defaults - only render details when complete
   const safeAnalysis = analysis ?? emptyAnalysis(repoUrl);
-  const hasError = cachedAnalysis.status === 'error' || !!fetchError;
+  const hasError = cachedAnalysis.status === 'error';
 
   // Safe destructuring with fallbacks
   const niche = safeAnalysis.summary?.niche ?? 'Unknown';
@@ -126,25 +73,9 @@ export default function InsightsPage() {
     navigate(grantsUrl);
   };
 
-  // Loading state
-  if (isLoading) {
-    return (
-      <Layout>
-        <div className="container mx-auto px-4 py-12 max-w-2xl">
-          <Card>
-            <CardContent className="py-12 text-center">
-              <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-primary" />
-              <p className="text-muted-foreground">Loading analysis results...</p>
-            </CardContent>
-          </Card>
-        </div>
-      </Layout>
-    );
-  }
-
-  // Error or no data state
+  // Error or no data state - redirect to analyze if no cached analysis
   if (hasError || !isComplete) {
-    const errorMessage = fetchError || cachedAnalysis.errors?.[0] || 'Please analyze a repository first.';
+    const errorMessage = cachedAnalysis.errors?.[0] || 'No analysis cached. Please analyze again.';
     
     return (
       <Layout>
