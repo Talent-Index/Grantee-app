@@ -22,31 +22,73 @@ import {
   RISK_THRESHOLDS
 } from './config';
 
+// ============= SAFE ACCESSORS (prevent undefined crashes) =============
+
+function safeNumber(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && !isNaN(value)) return value;
+  return fallback;
+}
+
+function safeString(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') return value;
+  return fallback;
+}
+
+function safeArray<T>(value: unknown, fallback: T[] = []): T[] {
+  if (Array.isArray(value)) return value as T[];
+  return fallback;
+}
+
+function safeObject<T extends Record<string, unknown>>(value: unknown, fallback: T): T {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as T;
+  return fallback;
+}
+
 // ============= SIGNAL EXTRACTION =============
 
-export function extractSignals(result: RepoAnalysisResult): RawSignal[] {
+export function extractSignals(result: RepoAnalysisResult | null | undefined): RawSignal[] {
+  // Return empty signals if no result - NEVER crash
+  if (!result) {
+    return [];
+  }
+
   const signals: RawSignal[] = [];
+
+  // Safely access nested properties
+  const activity = safeObject(result.activity, { lastCommit: '', commits30d: 0 });
+  const issues = safeObject(result.issues, { open: 0, closed: 0 });
+  const codeQuality = safeObject(result.codeQuality, { score: 0, notes: [] });
+  const languages = safeObject(result.languages, {} as Record<string, number>);
+  const grantFit = safeObject(result.grantFit, { signals: [], recommendations: [], matches: [] });
+
+  const commits30d = safeNumber(activity.commits30d);
+  const stars = safeNumber(result.stars);
+  const forks = safeNumber(result.forks);
 
   // Activity signals
   signals.push({
     key: 'commits30d',
     category: 'activity',
-    rawValue: result.activity.commits30d,
-    normalizedValue: normalizeValue(result.activity.commits30d, SIGNAL_THRESHOLDS.commits30d),
+    rawValue: commits30d,
+    normalizedValue: normalizeValue(commits30d, SIGNAL_THRESHOLDS.commits30d),
     label: 'Recent Commits (30d)',
-    description: `${result.activity.commits30d} commits in the last 30 days`,
+    description: `${commits30d} commits in the last 30 days`,
     weight: SIGNAL_WEIGHTS.commits30d.weight,
   });
 
-  const lastCommitDate = new Date(result.activity.lastCommit);
-  const daysSinceCommit = Math.floor((Date.now() - lastCommitDate.getTime()) / (1000 * 60 * 60 * 24));
+  const lastCommitStr = safeString(activity.lastCommit);
+  const lastCommitDate = lastCommitStr ? new Date(lastCommitStr) : new Date();
+  const daysSinceCommit = lastCommitStr 
+    ? Math.floor((Date.now() - lastCommitDate.getTime()) / (1000 * 60 * 60 * 24))
+    : 999; // Very old if no commit date
+  
   signals.push({
     key: 'lastCommitRecency',
     category: 'activity',
     rawValue: daysSinceCommit,
-    normalizedValue: Math.max(0, 1 - (daysSinceCommit / 90)), // 0-90 days scale
+    normalizedValue: Math.max(0, 1 - (daysSinceCommit / 90)),
     label: 'Last Commit Recency',
-    description: `Last commit ${daysSinceCommit} days ago`,
+    description: lastCommitStr ? `Last commit ${daysSinceCommit} days ago` : 'No commit data',
     weight: SIGNAL_WEIGHTS.lastCommitRecency.weight,
   });
 
@@ -54,26 +96,28 @@ export function extractSignals(result: RepoAnalysisResult): RawSignal[] {
   signals.push({
     key: 'stars',
     category: 'community',
-    rawValue: result.stars,
-    normalizedValue: normalizeValue(result.stars, SIGNAL_THRESHOLDS.stars),
+    rawValue: stars,
+    normalizedValue: normalizeValue(stars, SIGNAL_THRESHOLDS.stars),
     label: 'GitHub Stars',
-    description: `${result.stars.toLocaleString()} stars`,
+    description: `${stars.toLocaleString()} stars`,
     weight: SIGNAL_WEIGHTS.stars.weight,
   });
 
   signals.push({
     key: 'forks',
     category: 'community',
-    rawValue: result.forks,
-    normalizedValue: normalizeValue(result.forks, SIGNAL_THRESHOLDS.forks),
+    rawValue: forks,
+    normalizedValue: normalizeValue(forks, SIGNAL_THRESHOLDS.forks),
     label: 'Forks',
-    description: `${result.forks.toLocaleString()} forks`,
+    description: `${forks.toLocaleString()} forks`,
     weight: SIGNAL_WEIGHTS.forks.weight,
   });
 
   // Issue activity
-  const totalIssues = result.issues.open + result.issues.closed;
-  const issueResolutionRate = totalIssues > 0 ? result.issues.closed / totalIssues : 0;
+  const openIssues = safeNumber(issues.open);
+  const closedIssues = safeNumber(issues.closed);
+  const totalIssues = openIssues + closedIssues;
+  const issueResolutionRate = totalIssues > 0 ? closedIssues / totalIssues : 0;
   signals.push({
     key: 'issueActivity',
     category: 'community',
@@ -85,18 +129,20 @@ export function extractSignals(result: RepoAnalysisResult): RawSignal[] {
   });
 
   // Code quality
+  const qualityScore = safeNumber(codeQuality.score);
   signals.push({
     key: 'codeQuality',
     category: 'code_quality',
-    rawValue: result.codeQuality.score,
-    normalizedValue: result.codeQuality.score / 100,
+    rawValue: qualityScore,
+    normalizedValue: qualityScore / 100,
     label: 'Code Quality Score',
-    description: `Quality score: ${result.codeQuality.score}/100`,
+    description: `Quality score: ${qualityScore}/100`,
     weight: SIGNAL_WEIGHTS.codeStructure.weight,
   });
 
   // Check for tests in quality notes
-  const hasTests = result.codeQuality.notes.some(note => 
+  const qualityNotes = safeArray<string>(codeQuality.notes);
+  const hasTests = qualityNotes.some(note => 
     note.toLowerCase().includes('test') || note.toLowerCase().includes('spec')
   );
   signals.push({
@@ -110,9 +156,8 @@ export function extractSignals(result: RepoAnalysisResult): RawSignal[] {
   });
 
   // Language signals for ecosystem alignment
-  const languages = Object.keys(result.languages);
-  const hasSolidity = languages.includes('Solidity');
-  const hasRust = languages.includes('Rust');
+  const languageKeys = Object.keys(languages);
+  const hasSolidity = languageKeys.includes('Solidity');
   
   signals.push({
     key: 'hasContracts',
@@ -129,7 +174,27 @@ export function extractSignals(result: RepoAnalysisResult): RawSignal[] {
 
 // ============= SCORE CALCULATION =============
 
-export function calculateScores(signals: RawSignal[], result: RepoAnalysisResult): ProjectScores {
+export function calculateScores(signals: RawSignal[], result: RepoAnalysisResult | null | undefined): ProjectScores {
+  // Return default scores if no result - NEVER crash
+  const defaultBreakdown = (type: ScoreType, label: string, description: string): ScoreBreakdown => ({
+    type,
+    score: 0,
+    label,
+    description,
+    factors: [],
+  });
+
+  if (!result) {
+    return {
+      grantFit: defaultBreakdown('grantFit', 'Grant Fit Score', 'No data available'),
+      capitalReadiness: defaultBreakdown('capitalReadiness', 'Capital Readiness Score', 'No data available'),
+      ecosystemAlignment: defaultBreakdown('ecosystemAlignment', 'Ecosystem Alignment Score', 'No data available'),
+      engagementEase: defaultBreakdown('engagementEase', 'Engagement Ease Score', 'No data available'),
+      overall: 0,
+      calculatedAt: Date.now(),
+    };
+  }
+
   const grantFit = calculateGrantFitScore(signals, result);
   const capitalReadiness = calculateCapitalReadinessScore(signals, result);
   const ecosystemAlignment = calculateEcosystemAlignmentScore(signals, result);
@@ -156,35 +221,45 @@ function calculateGrantFitScore(signals: RawSignal[], result: RepoAnalysisResult
   const factors: ScoreBreakdown['factors'] = [];
   let totalScore = 0;
 
+  // Safe accessors
+  const codeQuality = safeObject(result.codeQuality, { score: 0, notes: [] });
+  const activity = safeObject(result.activity, { lastCommit: '', commits30d: 0 });
+  const stars = safeNumber(result.stars);
+  const forks = safeNumber(result.forks);
+
   // Technical maturity (40%)
   const codeQualitySignal = signals.find(s => s.key === 'codeQuality');
   const codeScore = (codeQualitySignal?.normalizedValue || 0) * 40;
   factors.push({
     name: 'Technical Maturity',
     contribution: Math.round(codeScore),
-    explanation: `Code quality score of ${result.codeQuality.score}/100`,
+    explanation: `Code quality score of ${safeNumber(codeQuality.score)}/100`,
   });
   totalScore += codeScore;
 
   // Project activity (30%)
   const activitySignals = signals.filter(s => s.category === 'activity');
-  const activityAvg = activitySignals.reduce((sum, s) => sum + s.normalizedValue, 0) / activitySignals.length;
+  const activityAvg = activitySignals.length > 0 
+    ? activitySignals.reduce((sum, s) => sum + s.normalizedValue, 0) / activitySignals.length
+    : 0;
   const activityScore = activityAvg * 30;
   factors.push({
     name: 'Project Activity',
     contribution: Math.round(activityScore),
-    explanation: `${result.activity.commits30d} commits in 30 days`,
+    explanation: `${safeNumber(activity.commits30d)} commits in 30 days`,
   });
   totalScore += activityScore;
 
   // Community traction (30%)
   const communitySignals = signals.filter(s => s.category === 'community');
-  const communityAvg = communitySignals.reduce((sum, s) => sum + s.normalizedValue, 0) / communitySignals.length;
+  const communityAvg = communitySignals.length > 0 
+    ? communitySignals.reduce((sum, s) => sum + s.normalizedValue, 0) / communitySignals.length
+    : 0;
   const communityScore = communityAvg * 30;
   factors.push({
     name: 'Community Traction',
     contribution: Math.round(communityScore),
-    explanation: `${result.stars} stars, ${result.forks} forks`,
+    explanation: `${stars} stars, ${forks} forks`,
   });
   totalScore += communityScore;
 
@@ -201,8 +276,13 @@ function calculateCapitalReadinessScore(signals: RawSignal[], result: RepoAnalys
   const factors: ScoreBreakdown['factors'] = [];
   let totalScore = 0;
 
+  // Safe accessors
+  const codeQuality = safeObject(result.codeQuality, { score: 0, notes: [] });
+  const activity = safeObject(result.activity, { lastCommit: '', commits30d: 0 });
+  const issues = safeObject(result.issues, { open: 0, closed: 0 });
+  const qualityNotes = safeArray<string>(codeQuality.notes);
+
   // Documentation & presentation (35%)
-  const qualityNotes = result.codeQuality.notes;
   const docScore = Math.min(qualityNotes.length * 7, 35);
   factors.push({
     name: 'Documentation Quality',
@@ -212,25 +292,29 @@ function calculateCapitalReadinessScore(signals: RawSignal[], result: RepoAnalys
   totalScore += docScore;
 
   // Code quality (30%)
-  const codeScore = (result.codeQuality.score / 100) * 30;
+  const qualityScore = safeNumber(codeQuality.score);
+  const codeScore = (qualityScore / 100) * 30;
   factors.push({
     name: 'Code Quality',
     contribution: Math.round(codeScore),
-    explanation: `Quality score: ${result.codeQuality.score}`,
+    explanation: `Quality score: ${qualityScore}`,
   });
   totalScore += codeScore;
 
   // Development velocity (20%)
-  const velocityScore = Math.min(result.activity.commits30d * 0.5, 20);
+  const commits = safeNumber(activity.commits30d);
+  const velocityScore = Math.min(commits * 0.5, 20);
   factors.push({
     name: 'Development Velocity',
     contribution: Math.round(velocityScore),
-    explanation: `${result.activity.commits30d} recent commits`,
+    explanation: `${commits} recent commits`,
   });
   totalScore += velocityScore;
 
   // Issue management (15%)
-  const issueRatio = result.issues.closed / Math.max(1, result.issues.open + result.issues.closed);
+  const openIssues = safeNumber(issues.open);
+  const closedIssues = safeNumber(issues.closed);
+  const issueRatio = closedIssues / Math.max(1, openIssues + closedIssues);
   const issueScore = issueRatio * 15;
   factors.push({
     name: 'Issue Management',
@@ -252,11 +336,16 @@ function calculateEcosystemAlignmentScore(signals: RawSignal[], result: RepoAnal
   const factors: ScoreBreakdown['factors'] = [];
   let totalScore = 0;
 
+  // Safe accessors
+  const languages = safeObject(result.languages, {} as Record<string, number>);
+  const grantFit = safeObject(result.grantFit, { signals: [], recommendations: [], matches: [] });
+  const grantSignals = safeArray<string>(grantFit.signals);
+
   // Language-ecosystem fit (50%)
-  const languages = Object.keys(result.languages);
-  const hasSolidity = languages.includes('Solidity');
-  const hasRust = languages.includes('Rust');
-  const hasTS = languages.includes('TypeScript') || languages.includes('JavaScript');
+  const languageKeys = Object.keys(languages);
+  const hasSolidity = languageKeys.includes('Solidity');
+  const hasRust = languageKeys.includes('Rust');
+  const hasTS = languageKeys.includes('TypeScript') || languageKeys.includes('JavaScript');
   
   let langScore = 0;
   if (hasSolidity) langScore += 25;
@@ -267,12 +356,12 @@ function calculateEcosystemAlignmentScore(signals: RawSignal[], result: RepoAnal
   factors.push({
     name: 'Language Ecosystem Fit',
     contribution: langScore,
-    explanation: `Primary: ${Object.keys(result.languages).slice(0, 3).join(', ')}`,
+    explanation: `Primary: ${languageKeys.slice(0, 3).join(', ') || 'Unknown'}`,
   });
   totalScore += langScore;
 
   // Grant signal alignment (50%)
-  const signalCount = result.grantFit.signals.length;
+  const signalCount = grantSignals.length;
   const signalScore = Math.min(signalCount * 10, 50);
   factors.push({
     name: 'Grant Signal Alignment',
@@ -294,29 +383,40 @@ function calculateEngagementEaseScore(signals: RawSignal[], result: RepoAnalysis
   const factors: ScoreBreakdown['factors'] = [];
   let totalScore = 0;
 
+  // Safe accessors
+  const activity = safeObject(result.activity, { lastCommit: '', commits30d: 0 });
+  const issues = safeObject(result.issues, { open: 0, closed: 0 });
+  const codeQuality = safeObject(result.codeQuality, { score: 0, notes: [] });
+  const qualityNotes = safeArray<string>(codeQuality.notes);
+
   // Activity recency (40%)
-  const lastCommitDate = new Date(result.activity.lastCommit);
-  const daysSinceCommit = Math.floor((Date.now() - lastCommitDate.getTime()) / (1000 * 60 * 60 * 24));
+  const lastCommitStr = safeString(activity.lastCommit);
+  const lastCommitDate = lastCommitStr ? new Date(lastCommitStr) : new Date(0);
+  const daysSinceCommit = lastCommitStr 
+    ? Math.floor((Date.now() - lastCommitDate.getTime()) / (1000 * 60 * 60 * 24))
+    : 999;
   const recencyScore = Math.max(0, 40 - daysSinceCommit * 0.5);
   factors.push({
     name: 'Activity Recency',
     contribution: Math.round(recencyScore),
-    explanation: `Last commit ${daysSinceCommit} days ago`,
+    explanation: lastCommitStr ? `Last commit ${daysSinceCommit} days ago` : 'No commit data',
   });
   totalScore += recencyScore;
 
   // Responsiveness (30%)
-  const issueRatio = result.issues.closed / Math.max(1, result.issues.open + result.issues.closed);
+  const openIssues = safeNumber(issues.open);
+  const closedIssues = safeNumber(issues.closed);
+  const issueRatio = closedIssues / Math.max(1, openIssues + closedIssues);
   const responsivenessScore = issueRatio * 30;
   factors.push({
     name: 'Team Responsiveness',
     contribution: Math.round(responsivenessScore),
-    explanation: `${result.issues.closed} issues closed`,
+    explanation: `${closedIssues} issues closed`,
   });
   totalScore += responsivenessScore;
 
   // Documentation (30%)
-  const docScore = Math.min(result.codeQuality.notes.length * 6, 30);
+  const docScore = Math.min(qualityNotes.length * 6, 30);
   factors.push({
     name: 'Project Clarity',
     contribution: docScore,
@@ -335,29 +435,39 @@ function calculateEngagementEaseScore(signals: RawSignal[], result: RepoAnalysis
 
 // ============= RISK FLAGS =============
 
-export function detectRiskFlags(signals: RawSignal[], result: RepoAnalysisResult): RiskFlag[] {
+export function detectRiskFlags(signals: RawSignal[], result: RepoAnalysisResult | null | undefined): RiskFlag[] {
+  if (!result) return [];
+  
   const flags: RiskFlag[] = [];
 
+  // Safe accessors
+  const activity = safeObject(result.activity, { lastCommit: '', commits30d: 0 });
+  const issues = safeObject(result.issues, { open: 0, closed: 0 });
+  const stars = safeNumber(result.stars);
+
   // Check activity
-  const lastCommitDate = new Date(result.activity.lastCommit);
-  const daysSinceCommit = Math.floor((Date.now() - lastCommitDate.getTime()) / (1000 * 60 * 60 * 24));
-  
-  if (daysSinceCommit > RISK_THRESHOLDS.criticalInactivityDays) {
-    flags.push({
-      type: 'critical',
-      message: `No commits in ${daysSinceCommit} days`,
-      category: 'activity',
-    });
-  } else if (daysSinceCommit > RISK_THRESHOLDS.inactivityDays) {
-    flags.push({
-      type: 'warning',
-      message: `Limited recent activity (${daysSinceCommit} days since last commit)`,
-      category: 'activity',
-    });
+  const lastCommitStr = safeString(activity.lastCommit);
+  if (lastCommitStr) {
+    const lastCommitDate = new Date(lastCommitStr);
+    const daysSinceCommit = Math.floor((Date.now() - lastCommitDate.getTime()) / (1000 * 60 * 60 * 24));
+    
+    if (daysSinceCommit > RISK_THRESHOLDS.criticalInactivityDays) {
+      flags.push({
+        type: 'critical',
+        message: `No commits in ${daysSinceCommit} days`,
+        category: 'activity',
+      });
+    } else if (daysSinceCommit > RISK_THRESHOLDS.inactivityDays) {
+      flags.push({
+        type: 'warning',
+        message: `Limited recent activity (${daysSinceCommit} days since last commit)`,
+        category: 'activity',
+      });
+    }
   }
 
   // Check stars
-  if (result.stars < RISK_THRESHOLDS.lowStars) {
+  if (stars < RISK_THRESHOLDS.lowStars) {
     flags.push({
       type: 'warning',
       message: 'Low community visibility (few stars)',
@@ -376,8 +486,10 @@ export function detectRiskFlags(signals: RawSignal[], result: RepoAnalysisResult
   }
 
   // Check issue ratio
-  const totalIssues = result.issues.open + result.issues.closed;
-  if (totalIssues > 10 && result.issues.open / totalIssues > RISK_THRESHOLDS.highOpenIssueRatio) {
+  const openIssues = safeNumber(issues.open);
+  const closedIssues = safeNumber(issues.closed);
+  const totalIssues = openIssues + closedIssues;
+  if (totalIssues > 10 && openIssues / totalIssues > RISK_THRESHOLDS.highOpenIssueRatio) {
     flags.push({
       type: 'warning',
       message: 'High ratio of unresolved issues',
@@ -390,9 +502,18 @@ export function detectRiskFlags(signals: RawSignal[], result: RepoAnalysisResult
 
 // ============= NEXT ACTIONS =============
 
-export function generateNextActions(signals: RawSignal[], result: RepoAnalysisResult, riskFlags: RiskFlag[]): NextAction[] {
+export function generateNextActions(signals: RawSignal[], result: RepoAnalysisResult | null | undefined, riskFlags: RiskFlag[]): NextAction[] {
+  if (!result) return [];
+
   const actions: NextAction[] = [];
   let actionId = 1;
+
+  // Safe accessors
+  const codeQuality = safeObject(result.codeQuality, { score: 0, notes: [] });
+  const grantFit = safeObject(result.grantFit, { signals: [], recommendations: [], matches: [] });
+  const qualityNotes = safeArray<string>(codeQuality.notes);
+  const matches = safeArray<GrantMatch>(grantFit.matches);
+  const stars = safeNumber(result.stars);
 
   // Activity-based actions
   if (riskFlags.some(f => f.category === 'activity')) {
@@ -418,7 +539,7 @@ export function generateNextActions(signals: RawSignal[], result: RepoAnalysisRe
   }
 
   // Community building
-  if (result.stars < 50) {
+  if (stars < 50) {
     actions.push({
       id: `action-${actionId++}`,
       action: 'Promote project to increase GitHub stars',
@@ -429,7 +550,7 @@ export function generateNextActions(signals: RawSignal[], result: RepoAnalysisRe
   }
 
   // Documentation
-  if (result.codeQuality.notes.length < 3) {
+  if (qualityNotes.length < 3) {
     actions.push({
       id: `action-${actionId++}`,
       action: 'Improve README with installation, usage examples, and API docs',
@@ -440,10 +561,10 @@ export function generateNextActions(signals: RawSignal[], result: RepoAnalysisRe
   }
 
   // Grant application
-  if (result.grantFit.matches && result.grantFit.matches.length > 0) {
+  if (matches.length > 0) {
     actions.push({
       id: `action-${actionId++}`,
-      action: `Apply to top matching grant: ${result.grantFit.matches[0].program}`,
+      action: `Apply to top matching grant: ${matches[0].program}`,
       priority: 'high',
       impact: 'Direct funding opportunity',
       completed: false,
@@ -456,10 +577,27 @@ export function generateNextActions(signals: RawSignal[], result: RepoAnalysisRe
 // ============= OPPORTUNITY CARD GENERATION =============
 
 export function generateOpportunityCard(
-  result: RepoAnalysisResult,
+  result: RepoAnalysisResult | null | undefined,
   signals: RawSignal[],
   scores: ProjectScores
 ): OpportunityCard {
+  // Return empty card if no result - NEVER crash
+  if (!result) {
+    return {
+      id: `opp-${Date.now()}`,
+      projectId: 'unknown',
+      projectName: 'Unknown Project',
+      projectUrl: '',
+      summary: 'No analysis data available',
+      strongestSignals: [],
+      riskFlags: [],
+      scores,
+      grantRecommendations: [],
+      nextActions: [],
+      generatedAt: Date.now(),
+    };
+  }
+
   const riskFlags = detectRiskFlags(signals, result);
   const nextActions = generateNextActions(signals, result, riskFlags);
   
@@ -471,27 +609,31 @@ export function generateOpportunityCard(
     strength: (s.normalizedValue > 0.7 ? 'strong' : s.normalizedValue > 0.4 ? 'moderate' : 'weak') as 'strong' | 'moderate' | 'weak',
   }));
 
+  // Safe accessors
+  const grantFit = safeObject(result.grantFit, { signals: [], recommendations: [], matches: [] });
+  const matches = safeArray<GrantMatch>(grantFit.matches);
+
   // Convert grant matches to recommendations
-  const grantRecommendations: GrantRecommendation[] = (result.grantFit.matches || []).map(match => ({
-    grantId: match.program.toLowerCase().replace(/\s+/g, '-'),
-    programName: match.program,
-    ecosystem: match.ecosystem,
-    confidence: match.fitScore,
-    whyFits: match.why,
+  const grantRecommendations: GrantRecommendation[] = matches.map(match => ({
+    grantId: (match.program || 'unknown').toLowerCase().replace(/\s+/g, '-'),
+    programName: match.program || 'Unknown Program',
+    ecosystem: match.ecosystem || 'Unknown',
+    confidence: safeNumber(match.fitScore),
+    whyFits: safeArray<string>(match.why),
     applyUrl: match.url,
   }));
 
   // Generate summary
   const summary = generateProjectSummary(result, scores);
 
-  const repoName = result.repo.split('/').pop() || result.repo;
-  const repoOwner = result.repo.split('/').slice(-2, -1)[0] || '';
+  const repoStr = safeString(result.repo);
+  const repoName = repoStr.split('/').pop() || repoStr || 'Unknown';
 
   return {
     id: `opp-${Date.now()}`,
-    projectId: result.repo,
+    projectId: repoStr,
     projectName: repoName,
-    projectUrl: `https://github.com/${result.repo}`,
+    projectUrl: repoStr ? `https://github.com/${repoStr}` : '',
     summary,
     strongestSignals,
     riskFlags,
@@ -503,25 +645,31 @@ export function generateOpportunityCard(
 }
 
 function generateProjectSummary(result: RepoAnalysisResult, scores: ProjectScores): string {
-  const primaryLang = Object.keys(result.languages)[0] || 'Unknown';
-  const activity = result.activity.commits30d > 20 ? 'highly active' : 
-                   result.activity.commits30d > 5 ? 'moderately active' : 'low activity';
+  const languages = safeObject(result.languages, {} as Record<string, number>);
+  const activity = safeObject(result.activity, { lastCommit: '', commits30d: 0 });
+  
+  const primaryLang = Object.keys(languages)[0] || 'Unknown';
+  const commits = safeNumber(activity.commits30d);
+  const activityLevel = commits > 20 ? 'highly active' : 
+                   commits > 5 ? 'moderately active' : 'low activity';
   
   const readiness = scores.capitalReadiness.score >= 70 ? 'capital-ready' :
                     scores.capitalReadiness.score >= 50 ? 'developing' : 'early-stage';
 
-  return `A ${readiness} ${primaryLang} project with ${activity} development. ` +
-         `${result.stars} stars, ${result.forks} forks. ` +
-         `Overall grant-readiness score: ${scores.overall}/100.`;
+  return `A ${activityLevel} ${primaryLang} project showing ${readiness} characteristics with an overall score of ${scores.overall}/100.`;
 }
 
-// ============= HELPERS =============
+// ============= NORMALIZATION HELPER =============
 
-function normalizeValue(value: number, thresholds: { low: number; medium: number; high: number; exceptional?: number }): number {
-  if (value <= 0) return 0;
-  if (value >= (thresholds.exceptional || thresholds.high * 2)) return 1;
-  if (value >= thresholds.high) return 0.8 + 0.2 * (value - thresholds.high) / ((thresholds.exceptional || thresholds.high * 2) - thresholds.high);
-  if (value >= thresholds.medium) return 0.5 + 0.3 * (value - thresholds.medium) / (thresholds.high - thresholds.medium);
-  if (value >= thresholds.low) return 0.2 + 0.3 * (value - thresholds.low) / (thresholds.medium - thresholds.low);
-  return 0.2 * (value / thresholds.low);
+function normalizeValue(
+  value: number,
+  thresholds: { low: number; medium: number; high: number; exceptional?: number }
+): number {
+  if (value <= thresholds.low) return value / thresholds.low * 0.25;
+  if (value <= thresholds.medium) return 0.25 + (value - thresholds.low) / (thresholds.medium - thresholds.low) * 0.25;
+  if (value <= thresholds.high) return 0.5 + (value - thresholds.medium) / (thresholds.high - thresholds.medium) * 0.25;
+  if (thresholds.exceptional && value <= thresholds.exceptional) {
+    return 0.75 + (value - thresholds.high) / (thresholds.exceptional - thresholds.high) * 0.25;
+  }
+  return 1;
 }
