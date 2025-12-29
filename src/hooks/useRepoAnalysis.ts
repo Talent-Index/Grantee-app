@@ -16,10 +16,12 @@ const ANALYSIS_CACHE_KEY = 'current-repo-analysis';
 export function useRepoAnalysis() {
   const queryClient = useQueryClient();
 
-  // Get current analysis from cache (with safe defaults)
-  const getAnalysis = useCallback((): RepoAnalysis => {
+  // Get current analysis from cache (NEVER returns null/undefined)
+  const getAnalysis = useCallback((repoUrl?: string): RepoAnalysis => {
     const cached = queryClient.getQueryData<RepoAnalysis>([ANALYSIS_CACHE_KEY]);
-    return cached ?? emptyAnalysis();
+    // Always return a valid RepoAnalysis, never null/undefined
+    if (cached) return cached;
+    return emptyAnalysis(repoUrl?.trim() ?? "");
   }, [queryClient]);
 
   // Set analysis in cache
@@ -58,8 +60,9 @@ export function useRepoAnalysis() {
     // Calculate match score from code quality or grant fit
     const matchScore = result.codeQuality?.score ?? 0;
     
-    // Find primary language
-    const langEntries = Object.entries(result.languages ?? {});
+    // Find primary language (safe Object.entries)
+    const safeLanguages = result.languages ?? {};
+    const langEntries = Object.entries(safeLanguages);
     const primaryLanguage = langEntries.sort(([, a], [, b]) => b - a)[0]?.[0] ?? 'Unknown';
 
     // Build the strict analysis object

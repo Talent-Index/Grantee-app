@@ -48,9 +48,10 @@ export default function InsightsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // Get cached analysis
-  const cachedAnalysis = getAnalysis();
-  const analysis = cachedAnalysis.status === 'complete' ? cachedAnalysis : null;
+  // Get cached analysis using stable key (repoUrl)
+  const cachedAnalysis = getAnalysis(repoUrl);
+  const isComplete = cachedAnalysis.status === 'complete';
+  const analysis = isComplete ? cachedAnalysis : null;
 
   // Fetch result if not cached
   useEffect(() => {
@@ -97,17 +98,22 @@ export default function InsightsPage() {
     fetchResult();
   }, [jobId, analysis, repoUrl, settings.apiBaseUrl, setAnalysis, navigate]);
 
-  // Safe access with defaults
+  // Safe access with defaults - only render details when complete
   const safeAnalysis = analysis ?? emptyAnalysis(repoUrl);
-  const isComplete = analysis?.status === 'complete';
   const hasError = cachedAnalysis.status === 'error' || !!fetchError;
 
-  const {
-    summary: { niche, matchScore },
-    stack: { primaryLanguage },
-    activity: { commits30d, contributors, lastCommitDate },
-    repo: { owner, name, stars, forks, topics },
-  } = safeAnalysis;
+  // Safe destructuring with fallbacks
+  const niche = safeAnalysis.summary?.niche ?? 'Unknown';
+  const matchScore = safeAnalysis.summary?.matchScore ?? 0;
+  const primaryLanguage = safeAnalysis.stack?.primaryLanguage ?? 'Unknown';
+  const commits30d = safeAnalysis.activity?.commits30d ?? 0;
+  const contributors = safeAnalysis.activity?.contributors ?? 0;
+  const lastCommitDate = safeAnalysis.activity?.lastCommitDate ?? null;
+  const owner = safeAnalysis.repo?.owner ?? '';
+  const name = safeAnalysis.repo?.name ?? '';
+  const stars = safeAnalysis.repo?.stars ?? 0;
+  const forks = safeAnalysis.repo?.forks ?? 0;
+  const topics = safeAnalysis.repo?.topics ?? [];
 
   const momentum = getMomentumTrend(commits30d);
   const lastCommitFormatted = lastCommitDate 
