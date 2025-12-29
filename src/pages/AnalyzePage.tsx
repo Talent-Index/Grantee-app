@@ -306,23 +306,48 @@ export default function AnalyzePage() {
     }
   };
 
-  const handleAnalysisSuccess = (data: AnalysisResponse) => {
+  const handleAnalysisSuccess = async (data: AnalysisResponse) => {
     devLog('analyze-success', data);
     
     // Unlock grants and save to history
     if ((data.success || data.settlement?.success) && address) {
       unlockGrants(address);
       addToHistory(repoUrl.trim(), data.result, data.settlement, depth, chainHint);
-      toast.success('Payment successful! Analyzing repository...');
+      toast.success('Payment successful! Starting analysis...');
     } else if (data.result) {
       addToHistory(repoUrl.trim(), data.result, data.settlement, depth, chainHint);
     }
 
-    // Navigate to processing screen instead of showing results directly
-    // This prevents blank screens and provides a better UX
-    const encodedUrl = encodeURIComponent(repoUrl.trim());
-    const jobId = `job_${Date.now()}`;
-    navigate(`/analysis?repoUrl=${encodedUrl}&jobId=${jobId}`);
+    // Call backend to start analysis job
+    try {
+      const startResponse = await fetch(`${settings.apiBaseUrl}/api/analyze/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ repoUrl: repoUrl.trim() }),
+      });
+
+      if (!startResponse.ok) {
+        throw new Error(`Failed to start analysis: HTTP ${startResponse.status}`);
+      }
+
+      const { jobId } = await startResponse.json();
+      
+      if (!jobId) {
+        throw new Error('No job ID returned from backend');
+      }
+
+      // Navigate to processing screen
+      const encodedUrl = encodeURIComponent(repoUrl.trim());
+      navigate(`/analysis?repoUrl=${encodedUrl}&jobId=${jobId}`);
+    } catch (err) {
+      console.error('[Grantee] Failed to start analysis:', err);
+      toast.error('Failed to start analysis. Please try again.');
+      setStep('error');
+      setError(err instanceof Error ? err.message : 'Failed to start analysis');
+    }
   };
 
   const handleError = (err: unknown) => {

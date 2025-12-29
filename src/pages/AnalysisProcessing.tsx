@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
@@ -14,7 +14,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Layout } from '@/components/Layout';
 import { useRepoAnalysis } from '@/hooks/useRepoAnalysis';
-import { emptyAnalysis } from '@/types/repoAnalysis';
+import { getSettings } from '@/lib/settings';
+import type { RepoAnalysis } from '@/types/repoAnalysis';
 
 type ProcessingStep = 'metadata' | 'languages' | 'activity' | 'finalizing';
 
@@ -25,117 +26,127 @@ const STEPS: { id: ProcessingStep; label: string }[] = [
   { id: 'finalizing', label: 'Generating insights' },
 ];
 
+const POLL_INTERVAL = 2000; // 2 seconds
+const MAX_POLL_TIME = 60000; // 60 seconds
+
 export default function AnalysisProcessing() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const settings = getSettings();
   const repoUrl = searchParams.get('repoUrl') || '';
   const jobId = searchParams.get('jobId') || '';
   
-  const { getAnalysis, completeAnalysis, setAnalysisError } = useRepoAnalysis();
+  const { getAnalysis, setAnalysis } = useRepoAnalysis();
   
   const [currentStep, setCurrentStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const pollStartTime = useRef<number>(Date.now());
+  const isPolling = useRef(false);
 
   // Parse repo name from URL
   const repoName = repoUrl.match(/github\.com\/([^/]+\/[^/]+)/)?.[1] || 'Repository';
 
-  // Simulate progress steps (since we don't have real backend polling yet)
-  useEffect(() => {
-    if (error) return;
-
-    const stepInterval = setInterval(() => {
-      setCurrentStep(prev => {
-        if (prev < STEPS.length - 1) {
-          return prev + 1;
-        }
-        return prev;
-      });
-    }, 2000);
-
-    const elapsedInterval = setInterval(() => {
-      setElapsedSeconds(prev => prev + 1);
-    }, 1000);
-
-    return () => {
-      clearInterval(stepInterval);
-      clearInterval(elapsedInterval);
-    };
-  }, [error]);
-
-  // Check for cached analysis or simulate completion
-  useEffect(() => {
-    const analysis = getAnalysis();
+  // Poll backend for analysis status
+  const pollStatus = useCallback(async () => {
+    if (!jobId || isPolling.current) return;
     
-    // If already complete, navigate to insights
-    if (analysis.status === 'complete') {
-      navigate(`/insights?repoUrl=${encodeURIComponent(repoUrl)}`);
+    isPolling.current = true;
+    
+    try {
+      const response = await fetch(
+        `${settings.apiBaseUrl}/api/analyze/status?jobId=${encodeURIComponent(jobId)}`,
+        {
+          method: 'GET',
+          headers: { 'Accept': 'application/json' },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      // Update step progress based on status
+      if (data.step) {
+        const stepIndex = STEPS.findIndex(s => s.id === data.step);
+        if (stepIndex >= 0) {
+          setCurrentStep(stepIndex);
+        }
+      } else if (data.status === 'processing') {
+        // Increment step gradually if no step info
+        setCurrentStep(prev => Math.min(prev + 1, STEPS.length - 2));
+      }
+
+      if (data.status === 'complete' && data.analysis) {
+        // Store completed analysis in cache
+        const analysis: RepoAnalysis = {
+          ...data.analysis,
+          status: 'complete',
+          repoUrl,
+        };
+        setAnalysis(analysis);
+        navigate(`/insights?repoUrl=${encodeURIComponent(repoUrl)}&jobId=${jobId}`);
+        return;
+      }
+
+      if (data.status === 'error') {
+        setError(data.error || 'Analysis failed. Please try again.');
+        setAnalysis({
+          ...getAnalysis(),
+          status: 'error',
+          errors: [data.error || 'Unknown error'],
+        });
+        return;
+      }
+
+      // Check timeout
+      const elapsed = Date.now() - pollStartTime.current;
+      if (elapsed >= MAX_POLL_TIME) {
+        setError('Analysis timed out. Please try again.');
+        return;
+      }
+
+      // Continue polling
+      setTimeout(pollStatus, POLL_INTERVAL);
+    } catch (err) {
+      console.error('[Analysis] Poll failed:', err);
+      setError(err instanceof Error ? err.message : 'Failed to check analysis status');
+    } finally {
+      isPolling.current = false;
+    }
+  }, [jobId, repoUrl, navigate, settings.apiBaseUrl, setAnalysis, getAnalysis]);
+
+  // Start polling on mount
+  useEffect(() => {
+    if (!jobId) {
+      setError('Missing job ID. Please try analyzing again.');
       return;
     }
 
-    // Simulate completion after all steps
-    if (currentStep >= STEPS.length - 1 && elapsedSeconds >= 8) {
-      // Create a mock complete analysis for demo
-      // In production, this would come from polling the backend
-      const mockAnalysis = {
-        ...emptyAnalysis(repoUrl),
-        status: 'complete' as const,
-        summary: {
-          niche: 'Infrastructure',
-          oneLiner: 'A Web3 development toolkit',
-          matchScore: 75,
-          confidence: 0.8,
-        },
-        repo: {
-          owner: repoName.split('/')[0] || '',
-          name: repoName.split('/')[1] || '',
-          stars: 150,
-          forks: 25,
-          watchers: 150,
-          openIssues: 12,
-          closedIssues: 45,
-          topics: ['web3', 'ethereum', 'typescript'],
-          homepage: null,
-          lastPush: new Date().toISOString(),
-        },
-        activity: {
-          commits30d: 42,
-          commits90d: 120,
-          commits7d: 15,
-          contributors: 5,
-          lastCommitDate: new Date().toISOString(),
-        },
-        stack: {
-          primaryLanguage: 'TypeScript',
-          languages: { TypeScript: 75, JavaScript: 20, Solidity: 5 },
-          frameworks: ['React', 'Vite'],
-        },
-        quality: {
-          hasReadme: true,
-          hasLicense: true,
-          hasTests: true,
-          hasCI: true,
-          documentationScore: 80,
-          codeHealthScore: 75,
-        },
-        recommendations: {
-          nextSteps: ['Apply for Ethereum Foundation grants', 'Add more test coverage'],
-          missingPieces: ['Security audit', 'Multi-chain support'],
-        },
-        grantMatches: [],
-      };
-
-      // Store in cache and navigate
-      completeAnalysis({ result: mockAnalysis as any, success: true }, repoUrl);
-      navigate(`/insights?repoUrl=${encodeURIComponent(repoUrl)}`);
+    // Check if already complete in cache
+    const cached = getAnalysis();
+    if (cached.status === 'complete' && cached.repoUrl === repoUrl) {
+      navigate(`/insights?repoUrl=${encodeURIComponent(repoUrl)}&jobId=${jobId}`);
+      return;
     }
 
-    // Timeout after 60 seconds
-    if (elapsedSeconds >= 60) {
-      setError('Analysis timed out. Please try again.');
-      setAnalysisError(repoUrl, 'Analysis timed out');
-    }
-  }, [currentStep, elapsedSeconds, repoUrl, navigate, getAnalysis, completeAnalysis, setAnalysisError, repoName]);
+    // Start polling
+    pollStartTime.current = Date.now();
+    pollStatus();
+  }, [jobId, repoUrl, getAnalysis, navigate, pollStatus]);
+
+  // Timer for elapsed seconds display
+  useEffect(() => {
+    if (error) return;
+
+    const timer = setInterval(() => {
+      setElapsedSeconds(prev => prev + 1);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [error]);
 
   const handleRetry = () => {
     setError(null);

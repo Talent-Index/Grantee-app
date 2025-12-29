@@ -85,10 +85,9 @@ export function useRepoAnalysis() {
         lastPush: result.activity?.lastCommit ?? null,
       },
       activity: {
-        commits7d: Math.round((result.activity?.commits30d ?? 0) / 4),
         commits30d: result.activity?.commits30d ?? 0,
-        commits90d: 0, // Not provided by current backend
-        contributors: 0, // Not provided by current backend
+        commits90d: result.activity?.commits90d ?? 0,
+        contributors: result.activity?.contributors ?? 0,
         lastCommitDate: result.activity?.lastCommit ?? null,
       },
       stack: {
